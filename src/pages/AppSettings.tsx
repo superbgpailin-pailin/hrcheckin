@@ -5,7 +5,7 @@ import type { LatePenaltyRule } from '../types/app';
 import { controlDayForMonth, monthKey } from '../utils/shiftUtils';
 
 type SettingsTab = 'shift' | 'late' | 'employee-options';
-type EmployeeOptionKey = 'departments' | 'positions' | 'roles' | 'statuses';
+type EmployeeOptionKey = 'departments' | 'positions' | 'statuses';
 
 const createLateRuleId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -178,7 +178,6 @@ export const AppSettings: React.FC = () => {
     const optionGroups: Array<{ key: EmployeeOptionKey; label: string }> = [
         { key: 'departments', label: 'แผนก' },
         { key: 'positions', label: 'ตำแหน่ง' },
-        { key: 'roles', label: 'บทบาท' },
         { key: 'statuses', label: 'สถานะ' },
     ];
 
@@ -431,7 +430,7 @@ export const AppSettings: React.FC = () => {
                     </div>
 
                     <p className="panel-muted">
-                        ใช้สำหรับตัวเลือกในฟอร์มพนักงาน: แผนก, ตำแหน่ง, บทบาท, สถานะ
+                        ใช้สำหรับตัวเลือกในฟอร์มพนักงาน: แผนก, ตำแหน่ง, สถานะ
                     </p>
 
                     {optionGroups.map((group) => (

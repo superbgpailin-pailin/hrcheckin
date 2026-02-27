@@ -103,6 +103,18 @@ const isSchemaMissingError = (message: string): boolean => {
         || normalized.includes('does not exist');
 };
 
+const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    if (typeof error === 'object' && error && 'message' in error) {
+        return String((error as { message?: unknown }).message || '');
+    }
+
+    return String(error || '');
+};
+
 const ensureMasterAccount = (accounts: PortalAccount[]): PortalAccount[] => {
     const existingMaster = accounts.find((account) => normalizeUsername(account.username) === 'master');
     const masterAccount: PortalAccount = existingMaster
@@ -311,7 +323,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             setAccounts(merged);
             persistAccounts(merged);
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error || '');
+            const message = getErrorMessage(error);
             if (isSchemaMissingError(message)) {
                 accountsTableUnavailable = true;
             }
@@ -406,7 +418,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             try {
                 await insertRemoteAccount(newAccount);
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error || '');
+                const message = getErrorMessage(error);
                 if (isSchemaMissingError(message)) {
                     accountsTableUnavailable = true;
                 } else if (message.toLowerCase().includes('duplicate key')) {
@@ -464,7 +476,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 }
                 await updateRemoteAccount(username, remotePayload);
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error || '');
+                const message = getErrorMessage(error);
                 if (isSchemaMissingError(message)) {
                     accountsTableUnavailable = true;
                 } else {
@@ -516,7 +528,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             try {
                 await deleteRemoteAccount(username);
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error || '');
+                const message = getErrorMessage(error);
                 if (isSchemaMissingError(message)) {
                     accountsTableUnavailable = true;
                 } else {
@@ -561,7 +573,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             try {
                 await updateRemoteAccountPassword(currentAccount.username, newPassword);
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error || '');
+                const message = getErrorMessage(error);
                 if (isSchemaMissingError(message)) {
                     accountsTableUnavailable = true;
                 } else {

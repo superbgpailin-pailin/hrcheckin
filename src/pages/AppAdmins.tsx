@@ -64,20 +64,25 @@ export const AppAdmins: React.FC = () => {
             return;
         }
 
-        setChangingPassword(true);
-        const result = await changeOwnPassword({
-            currentPassword,
-            newPassword: nextPassword,
-        });
-        setChangingPassword(false);
-        setPasswordNotice(result.message || '');
-        if (!result.success) {
-            return;
-        }
+        try {
+            setChangingPassword(true);
+            const result = await changeOwnPassword({
+                currentPassword,
+                newPassword: nextPassword,
+            });
+            setPasswordNotice(result.message || (result.success ? 'Password updated.' : 'Password update failed.'));
+            if (!result.success) {
+                return;
+            }
 
-        setCurrentPassword('');
-        setNextPassword('');
-        setConfirmPassword('');
+            setCurrentPassword('');
+            setNextPassword('');
+            setConfirmPassword('');
+        } catch (error) {
+            setPasswordNotice(error instanceof Error ? error.message : 'Password update failed.');
+        } finally {
+            setChangingPassword(false);
+        }
     };
 
     const startEdit = (targetUsername: string, targetDisplayName: string) => {

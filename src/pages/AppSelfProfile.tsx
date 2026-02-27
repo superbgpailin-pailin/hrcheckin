@@ -63,6 +63,8 @@ const TEXT = {
             selfie: 'รูปตัวเอง',
             idCard: 'รูปบัตรประชาชน',
             passport: 'รูปพาสปอร์ต',
+            selectPosition: 'เลือกตำแหน่ง',
+            selectDepartment: 'เลือกแผนก',
         },
         langBtn: 'KH',
     },
@@ -113,6 +115,8 @@ const TEXT = {
             selfie: 'Selfie',
             idCard: 'ID Card',
             passport: 'Passport',
+            selectPosition: 'Select position',
+            selectDepartment: 'Select department',
         },
         langBtn: 'TH',
     },
@@ -472,6 +476,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                             <div>
                                 <label>{t.labels.position}</label>
                                 <select value={draft.position} onChange={(event) => update('position', event.target.value)}>
+                                    <option value="">{t.labels.selectPosition}</option>
                                     {positionOptions.map((option) => (
                                         <option key={option} value={option}>{option}</option>
                                     ))}
@@ -480,6 +485,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                             <div>
                                 <label>{t.labels.department}</label>
                                 <select value={draft.department} onChange={(event) => update('department', event.target.value)}>
+                                    <option value="">{t.labels.selectDepartment}</option>
                                     {departmentOptions.map((option) => (
                                         <option key={option} value={option}>{option}</option>
                                     ))}

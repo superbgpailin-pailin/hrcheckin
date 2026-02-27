@@ -80,18 +80,16 @@ const getEmployeeIdsFromRange = (value: string): { ids: string[]; error?: undefi
 interface EmployeeFieldOptions {
     departments: string[];
     positions: string[];
-    roles: string[];
     statuses: string[];
 }
 
 const createNewEmployee = (
     id: string,
-    role: AppEmployee['role'] = 'Employee',
     status: AppEmployee['status'] = 'Active',
 ): AppEmployee => {
     return {
         id,
-        role,
+        role: 'Employee',
         firstNameTH: '',
         lastNameTH: '',
         firstNameEN: '',
@@ -209,10 +207,6 @@ const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, fieldOptions,
         () => withCurrentOption(fieldOptions.positions, draft.position),
         [draft.position, fieldOptions.positions],
     );
-    const roleOptions = useMemo(
-        () => withCurrentOption(fieldOptions.roles, draft.role),
-        [draft.role, fieldOptions.roles],
-    );
     const statusOptions = useMemo(
         () => withCurrentOption(fieldOptions.statuses, draft.status),
         [draft.status, fieldOptions.statuses],
@@ -276,17 +270,6 @@ const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, fieldOptions,
                             onChange={(event) => update('department', event.target.value)}
                         >
                             {departmentOptions.map((option) => (
-                                <option key={option} value={option}>{option}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label>บทบาท</label>
-                        <select
-                            value={draft.role}
-                            onChange={(event) => update('role', event.target.value as AppEmployee['role'])}
-                        >
-                            {roleOptions.map((option) => (
                                 <option key={option} value={option}>{option}</option>
                             ))}
                         </select>
@@ -419,10 +402,6 @@ const EmployeeViewer: React.FC<EmployeeViewerProps> = ({ employee, onClose }) =>
                         <input value={employee.department} readOnly />
                     </div>
                     <div>
-                        <label>บทบาท</label>
-                        <input value={employee.role} readOnly />
-                    </div>
-                    <div>
                         <label>สถานะ</label>
                         <input value={employee.status} readOnly />
                     </div>
@@ -514,12 +493,10 @@ export const AppEmployees: React.FC = () => {
         return {
             departments: normalize(config.employeeFieldOptions.departments, ['HR', 'Operations']),
             positions: normalize(config.employeeFieldOptions.positions, ['Staff', 'Supervisor']),
-            roles: normalize(config.employeeFieldOptions.roles, ['Employee', 'Supervisor']),
             statuses: normalize(config.employeeFieldOptions.statuses, ['Active', 'OnLeave', 'Resigned']),
         };
     }, [config.employeeFieldOptions]);
 
-    const defaultRole = (employeeFieldOptions.roles[0] || 'Employee') as AppEmployee['role'];
     const defaultStatus = (employeeFieldOptions.statuses[0] || 'Active') as AppEmployee['status'];
 
     const filtered = useMemo(() => {
@@ -539,7 +516,6 @@ export const AppEmployees: React.FC = () => {
             id: employee.id,
             name_th: `${employee.firstNameTH} ${employee.lastNameTH}`,
             name_en: `${employee.firstNameEN} ${employee.lastNameEN}`,
-            role: employee.role,
             department: employee.department,
             position: employee.position,
             status: employee.status,
@@ -572,7 +548,7 @@ export const AppEmployees: React.FC = () => {
         setBulkCreating(true);
         setBulkCreateNotice('');
         try {
-            const items = rangeResult.ids.map((id) => createNewEmployee(id, defaultRole, defaultStatus));
+            const items = rangeResult.ids.map((id) => createNewEmployee(id, defaultStatus));
             await saveEmployees(items);
             setBulkCreateNotice(`สร้างพนักงาน ${items.length} คนเรียบร้อย (PIN อัตโนมัติ 111111)`);
             setBulkCreateRange('');
@@ -593,7 +569,7 @@ export const AppEmployees: React.FC = () => {
                         <button
                             type="button"
                             className="btn-primary"
-                            onClick={() => setEditorState(createNewEmployee(getNextEmployeeId(employees), defaultRole, defaultStatus))}
+                            onClick={() => setEditorState(createNewEmployee(getNextEmployeeId(employees), defaultStatus))}
                         >
                             เพิ่มพนักงาน
                         </button>
@@ -641,7 +617,6 @@ export const AppEmployees: React.FC = () => {
                             <tr>
                                 <th>รหัส</th>
                                 <th>ชื่อ</th>
-                                <th>บทบาท</th>
                                 <th>แผนก</th>
                                 <th>ตำแหน่ง</th>
                                 <th>สถานะ</th>
@@ -656,7 +631,6 @@ export const AppEmployees: React.FC = () => {
                                         <strong>{employee.firstNameTH} {employee.lastNameTH}</strong>
                                         <div className="panel-muted">{employee.firstNameEN} {employee.lastNameEN}</div>
                                     </td>
-                                    <td>{employee.role}</td>
                                     <td>{employee.department}</td>
                                     <td>{employee.position}</td>
                                     <td>{employee.status}</td>
