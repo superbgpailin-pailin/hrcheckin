@@ -15,6 +15,16 @@ export type PortalPage =
 
 export type CheckInStatus = 'On Time' | 'Late';
 
+export interface LatePenaltyRule {
+    id: string;
+    label: string;
+    minMinutes: number;
+    maxMinutes: number | null;
+    deductionAmount: number;
+    monthlyAccumulatedMinutesThreshold: number | null;
+    monthlyAccumulatedDeduction: number | null;
+}
+
 export interface ShiftDefinition {
     id: ShiftId;
     label: string;
@@ -36,6 +46,7 @@ export interface AppSystemConfig {
     qrTokenLifetimeSeconds: number;
     qrRefreshSeconds: number;
     lateGraceMinutes: number;
+    lateRules: LatePenaltyRule[];
     shifts: ShiftDefinition[];
     controlShiftPolicy: ControlShiftPolicy;
 }
@@ -121,6 +132,22 @@ export interface AttendanceSummaryRecord {
     status: CheckInStatus;
     source: 'QR';
     kioskId: string;
+}
+
+export interface AttendanceEmployeeReportRow {
+    employeeId: string;
+    employeeName: string;
+    department: string;
+    role: AppEmployee['role'];
+    employmentStatus: AppEmployee['status'];
+    checkInCount: number;
+    onTimeCount: number;
+    lateCount: number;
+    totalLateMinutes: number;
+    averageLateMinutes: number;
+    absentDays: number;
+    leaveDays: number;
+    latePenaltyAmount: number;
 }
 
 export interface QrTokenPayload {

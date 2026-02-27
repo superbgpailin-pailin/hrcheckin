@@ -1,4 +1,4 @@
-﻿-- HR CheckIn v2 schema (no deploy yet)
+-- HR CheckIn v2 schema (no deploy yet)
 -- Date: 2026-02-27
 
 begin;
@@ -134,6 +134,53 @@ values (
     'qrTokenLifetimeSeconds', 20,
     'qrRefreshSeconds', 8,
     'lateGraceMinutes', 15,
+    'lateRules', jsonb_build_array(
+      jsonb_build_object(
+        'id', 'late-0-5',
+        'label', 'สาย 0-5 นาที',
+        'minMinutes', 0,
+        'maxMinutes', 5,
+        'deductionAmount', 0,
+        'monthlyAccumulatedMinutesThreshold', 30,
+        'monthlyAccumulatedDeduction', 500
+      ),
+      jsonb_build_object(
+        'id', 'late-6-10',
+        'label', 'สาย 6-10 นาที',
+        'minMinutes', 6,
+        'maxMinutes', 10,
+        'deductionAmount', 100,
+        'monthlyAccumulatedMinutesThreshold', null,
+        'monthlyAccumulatedDeduction', null
+      ),
+      jsonb_build_object(
+        'id', 'late-11-20',
+        'label', 'สาย 11-20 นาที',
+        'minMinutes', 11,
+        'maxMinutes', 20,
+        'deductionAmount', 200,
+        'monthlyAccumulatedMinutesThreshold', null,
+        'monthlyAccumulatedDeduction', null
+      ),
+      jsonb_build_object(
+        'id', 'late-21-30',
+        'label', 'สาย 21-30 นาที',
+        'minMinutes', 21,
+        'maxMinutes', 30,
+        'deductionAmount', 300,
+        'monthlyAccumulatedMinutesThreshold', null,
+        'monthlyAccumulatedDeduction', null
+      ),
+      jsonb_build_object(
+        'id', 'late-31-plus',
+        'label', 'สายเกิน 30 นาที',
+        'minMinutes', 31,
+        'maxMinutes', null,
+        'deductionAmount', 500,
+        'monthlyAccumulatedMinutesThreshold', null,
+        'monthlyAccumulatedDeduction', null
+      )
+    ),
     'controlShiftPolicy', jsonb_build_object('enabled', true, 'overrides', jsonb_build_object()),
     'shifts', jsonb_build_array(
       jsonb_build_object('id', 'morning', 'label', 'กะเช้า 08:00-20:00', 'start', '08:00', 'end', '20:00'),

@@ -1,5 +1,5 @@
-﻿import { supabase } from '../lib/supabaseClient';
-import { DEFAULT_CONFIG } from '../data/appDefaults';
+import { supabase } from '../lib/supabaseClient';
+import { DEFAULT_CONFIG, DEFAULT_LATE_RULES } from '../data/appDefaults';
 import type { AppSystemConfig } from '../types/app';
 
 const tableName = 'settings';
@@ -17,14 +17,72 @@ const isSchemaMissingError = (message: string): boolean => {
         || normalized.includes('does not exist');
 };
 
+const normalizeNullableNumber = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return null;
+    }
+
+    return Math.max(0, Math.floor(parsed));
+};
+
+const cloneDefaultShifts = (): AppSystemConfig['shifts'] => {
+    return DEFAULT_CONFIG.shifts.map((shift) => ({ ...shift }));
+};
+
+const cloneDefaultLateRules = (): AppSystemConfig['lateRules'] => {
+    return DEFAULT_LATE_RULES.map((rule) => ({ ...rule }));
+};
+
+const normalizeLateRules = (rules?: AppSystemConfig['lateRules']): AppSystemConfig['lateRules'] => {
+    if (!rules?.length) {
+        return cloneDefaultLateRules();
+    }
+
+    return rules
+        .map((rule, index) => {
+            const minMinutes = Math.max(0, Math.floor(Number(rule.minMinutes) || 0));
+            const parsedMax = normalizeNullableNumber(rule.maxMinutes);
+            const maxMinutes = parsedMax === null ? null : Math.max(minMinutes, parsedMax);
+            const monthlyAccumulatedMinutesThreshold = normalizeNullableNumber(rule.monthlyAccumulatedMinutesThreshold);
+            const monthlyAccumulatedDeduction = normalizeNullableNumber(rule.monthlyAccumulatedDeduction);
+
+            return {
+                id: rule.id || `late-rule-${index + 1}`,
+                label: rule.label?.trim() || `กฎที่ ${index + 1}`,
+                minMinutes,
+                maxMinutes,
+                deductionAmount: Math.max(0, Math.floor(Number(rule.deductionAmount) || 0)),
+                monthlyAccumulatedMinutesThreshold,
+                monthlyAccumulatedDeduction: monthlyAccumulatedMinutesThreshold === null
+                    ? null
+                    : Math.max(0, monthlyAccumulatedDeduction || 0),
+            };
+        })
+        .sort((a, b) => a.minMinutes - b.minMinutes);
+};
+
 const mergeConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
     if (!input) {
-        return DEFAULT_CONFIG;
+        return {
+            ...DEFAULT_CONFIG,
+            shifts: cloneDefaultShifts(),
+            lateRules: cloneDefaultLateRules(),
+            controlShiftPolicy: {
+                ...DEFAULT_CONFIG.controlShiftPolicy,
+                overrides: { ...DEFAULT_CONFIG.controlShiftPolicy.overrides },
+            },
+        };
     }
 
     return {
         ...DEFAULT_CONFIG,
         ...input,
+        lateRules: normalizeLateRules(input.lateRules),
         controlShiftPolicy: {
             ...DEFAULT_CONFIG.controlShiftPolicy,
             ...input.controlShiftPolicy,
@@ -33,14 +91,16 @@ const mergeConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
                 ...(input.controlShiftPolicy?.overrides || {}),
             },
         },
-        shifts: input.shifts?.length ? input.shifts : DEFAULT_CONFIG.shifts,
+        shifts: input.shifts?.length
+            ? input.shifts.map((shift) => ({ ...shift }))
+            : cloneDefaultShifts(),
     };
 };
 
 export const appSettingsService = {
     async getSettings(): Promise<AppSystemConfig> {
         if (settingsTableUnavailable) {
-            return DEFAULT_CONFIG;
+            return mergeConfig();
         }
 
         try {
@@ -56,7 +116,7 @@ export const appSettingsService = {
 
             const rows = (data as SettingsRow[] | null) || [];
             if (!rows.length) {
-                return DEFAULT_CONFIG;
+                return mergeConfig();
             }
 
             return mergeConfig(rows[0].config);
@@ -65,7 +125,7 @@ export const appSettingsService = {
             if (isSchemaMissingError(message)) {
                 settingsTableUnavailable = true;
             }
-            return DEFAULT_CONFIG;
+            return mergeConfig();
         }
     },
 

@@ -1,4 +1,4 @@
-﻿import type { AppEmployee, AppSystemConfig, ShiftDefinition } from '../types/app';
+import type { AppEmployee, AppSystemConfig, LatePenaltyRule, ShiftDefinition } from '../types/app';
 
 export const DEFAULT_SHIFTS: ShiftDefinition[] = [
     { id: 'morning', label: 'กะเช้า 08:00-20:00', start: '08:00', end: '20:00' },
@@ -8,12 +8,61 @@ export const DEFAULT_SHIFTS: ShiftDefinition[] = [
     { id: 'control_day', label: 'ควบกะ 14:00-08:00', start: '14:00', end: '08:00', isControlShift: true },
 ];
 
+export const DEFAULT_LATE_RULES: LatePenaltyRule[] = [
+    {
+        id: 'late-0-5',
+        label: 'สาย 0-5 นาที',
+        minMinutes: 0,
+        maxMinutes: 5,
+        deductionAmount: 0,
+        monthlyAccumulatedMinutesThreshold: 30,
+        monthlyAccumulatedDeduction: 500,
+    },
+    {
+        id: 'late-6-10',
+        label: 'สาย 6-10 นาที',
+        minMinutes: 6,
+        maxMinutes: 10,
+        deductionAmount: 100,
+        monthlyAccumulatedMinutesThreshold: null,
+        monthlyAccumulatedDeduction: null,
+    },
+    {
+        id: 'late-11-20',
+        label: 'สาย 11-20 นาที',
+        minMinutes: 11,
+        maxMinutes: 20,
+        deductionAmount: 200,
+        monthlyAccumulatedMinutesThreshold: null,
+        monthlyAccumulatedDeduction: null,
+    },
+    {
+        id: 'late-21-30',
+        label: 'สาย 21-30 นาที',
+        minMinutes: 21,
+        maxMinutes: 30,
+        deductionAmount: 300,
+        monthlyAccumulatedMinutesThreshold: null,
+        monthlyAccumulatedDeduction: null,
+    },
+    {
+        id: 'late-31-plus',
+        label: 'สายเกิน 30 นาที',
+        minMinutes: 31,
+        maxMinutes: null,
+        deductionAmount: 500,
+        monthlyAccumulatedMinutesThreshold: null,
+        monthlyAccumulatedDeduction: null,
+    },
+];
+
 export const DEFAULT_CONFIG: AppSystemConfig = {
     companyName: 'HR CheckIn',
     qrSecret: 'CHANGE_ME_QR_SECRET_2026',
     qrTokenLifetimeSeconds: 20,
     qrRefreshSeconds: 8,
     lateGraceMinutes: 15,
+    lateRules: DEFAULT_LATE_RULES,
     shifts: DEFAULT_SHIFTS,
     controlShiftPolicy: {
         enabled: true,
