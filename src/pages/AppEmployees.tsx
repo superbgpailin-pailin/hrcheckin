@@ -8,7 +8,7 @@ import { ImageLightbox } from '../components/ImageLightbox';
 const EMPLOYEE_ID_PREFIX = 'CR';
 const EMPLOYEE_ID_PAD = 3;
 
-const getNextEmployeeId = (employees: AppEmployee[]): string => {
+const getEmployeeIdCursor = (employees: AppEmployee[]): { maxNumber: number; padLength: number } => {
     let maxNumber = 0;
     let padLength = EMPLOYEE_ID_PAD;
 
@@ -33,7 +33,21 @@ const getNextEmployeeId = (employees: AppEmployee[]): string => {
         }
     });
 
-    return `${EMPLOYEE_ID_PREFIX}${String(maxNumber + 1).padStart(padLength, '0')}`;
+    return { maxNumber, padLength };
+};
+
+const buildEmployeeId = (number: number, padLength: number): string => {
+    return `${EMPLOYEE_ID_PREFIX}${String(number).padStart(padLength, '0')}`;
+};
+
+const getNextEmployeeId = (employees: AppEmployee[]): string => {
+    const cursor = getEmployeeIdCursor(employees);
+    return buildEmployeeId(cursor.maxNumber + 1, cursor.padLength);
+};
+
+const getNextEmployeeIds = (employees: AppEmployee[], count: number): string[] => {
+    const cursor = getEmployeeIdCursor(employees);
+    return Array.from({ length: count }, (_, index) => buildEmployeeId(cursor.maxNumber + index + 1, cursor.padLength));
 };
 
 const createNewEmployee = (id: string): AppEmployee => {
@@ -49,7 +63,7 @@ const createNewEmployee = (id: string): AppEmployee => {
         department: '',
         status: 'Active',
         photoUrl: `https://ui-avatars.com/api/?name=${id}&background=6366f1&color=fff`,
-        pin: '123456',
+        pin: '111111',
         email: '',
         phoneNumber: '',
         birthDate: '',
@@ -386,11 +400,14 @@ const EmployeeViewer: React.FC<EmployeeViewerProps> = ({ employee, onClose }) =>
 };
 
 export const AppEmployees: React.FC = () => {
-    const { employees, saveEmployee, deleteEmployee } = useAppEmployees();
+    const { employees, saveEmployee, saveEmployees, deleteEmployee } = useAppEmployees();
 
     const [query, setQuery] = useState('');
     const [editorState, setEditorState] = useState<AppEmployee | null>(null);
     const [viewerState, setViewerState] = useState<AppEmployee | null>(null);
+    const [bulkCreateCount, setBulkCreateCount] = useState('5');
+    const [bulkCreateNotice, setBulkCreateNotice] = useState('');
+    const [bulkCreating, setBulkCreating] = useState(false);
 
     const filtered = useMemo(() => {
         const normalized = query.trim().toLowerCase();
@@ -423,6 +440,37 @@ export const AppEmployees: React.FC = () => {
         downloadCsv('employees_export.csv', rows);
     };
 
+    const createEmployeesInBulk = async () => {
+        const count = Number.parseInt(bulkCreateCount, 10);
+        if (Number.isNaN(count) || count <= 0) {
+            setBulkCreateNotice('Please enter a valid amount.');
+            return;
+        }
+
+        if (count > 200) {
+            setBulkCreateNotice('Maximum 200 employees per batch.');
+            return;
+        }
+
+        const nextIds = getNextEmployeeIds(employees, count);
+        if (nextIds.length === 0) {
+            setBulkCreateNotice('No employee IDs available for creation.');
+            return;
+        }
+
+        setBulkCreating(true);
+        setBulkCreateNotice('');
+        try {
+            const items = nextIds.map((id) => createNewEmployee(id));
+            await saveEmployees(items);
+            setBulkCreateNotice(`Created ${items.length} employees. Default PIN: 111111`);
+        } catch (error) {
+            setBulkCreateNotice(error instanceof Error ? error.message : 'Failed to create employees.');
+        } finally {
+            setBulkCreating(false);
+        }
+    };
+
     return (
         <div className="portal-grid reveal-up">
             <section className="panel">
@@ -449,7 +497,32 @@ export const AppEmployees: React.FC = () => {
                             onChange={(event) => setQuery(event.target.value)}
                         />
                     </div>
+                    <div>
+                        <label>Bulk Create (PIN 111111)</label>
+                        <input
+                            type="number"
+                            min={1}
+                            max={200}
+                            value={bulkCreateCount}
+                            onChange={(event) => setBulkCreateCount(event.target.value.replace(/\D/g, ''))}
+                            placeholder="e.g. 10"
+                        />
+                        <div className="panel-muted">Auto-generate sequential employee IDs from the latest code.</div>
+                    </div>
                 </div>
+
+                <div className="inline-actions" style={{ justifyContent: 'flex-end', marginTop: '0.8rem' }}>
+                    <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={bulkCreating}
+                        onClick={() => void createEmployeesInBulk()}
+                    >
+                        {bulkCreating ? 'Creating...' : 'Create Batch'}
+                    </button>
+                </div>
+
+                {bulkCreateNotice ? <p className="panel-muted" style={{ marginTop: '0.6rem' }}>{bulkCreateNotice}</p> : null}
             </section>
 
             <section className="panel table-panel">

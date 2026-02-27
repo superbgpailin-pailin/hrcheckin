@@ -9,6 +9,7 @@ interface AppEmployeeContextValue {
     error: string | null;
     refreshEmployees: () => Promise<void>;
     saveEmployee: (employee: AppEmployee) => Promise<void>;
+    saveEmployees: (items: AppEmployee[]) => Promise<void>;
     deleteEmployee: (employeeId: string) => Promise<void>;
 }
 
@@ -41,6 +42,13 @@ export const AppEmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ c
         await refreshEmployees();
     }, [refreshEmployees]);
 
+    const saveEmployees = useCallback(async (items: AppEmployee[]) => {
+        for (const employee of items) {
+            await appEmployeeService.upsertEmployee(employee);
+        }
+        await refreshEmployees();
+    }, [refreshEmployees]);
+
     const deleteEmployee = useCallback(async (employeeId: string) => {
         await appEmployeeService.deleteEmployee(employeeId);
         await refreshEmployees();
@@ -53,9 +61,10 @@ export const AppEmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ c
             error,
             refreshEmployees,
             saveEmployee,
+            saveEmployees,
             deleteEmployee,
         };
-    }, [deleteEmployee, employees, error, loading, refreshEmployees, saveEmployee]);
+    }, [deleteEmployee, employees, error, loading, refreshEmployees, saveEmployee, saveEmployees]);
 
     return <AppEmployeeContext.Provider value={value}>{children}</AppEmployeeContext.Provider>;
 };

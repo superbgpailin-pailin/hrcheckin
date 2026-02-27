@@ -25,14 +25,12 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onBack, onLogin 
         <div className="auth-screen">
             <form className="auth-card reveal-up" onSubmit={submit}>
                 <h2>เข้าสู่ Admin Portal</h2>
-                <p>ระบบ Admin แยกจากพนักงาน (ค่าเริ่มต้น: master / !master)</p>
 
                 <label htmlFor="admin-username">Username</label>
                 <input
                     id="admin-username"
                     value={username}
                     onChange={(event) => setUsername(event.target.value)}
-                    placeholder="master"
                     autoComplete="username"
                 />
 
@@ -42,7 +40,6 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onBack, onLogin 
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder="!master"
                     autoComplete="current-password"
                 />
 

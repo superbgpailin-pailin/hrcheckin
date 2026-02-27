@@ -2,12 +2,18 @@ import React, { useMemo, useState } from 'react';
 import { usePortalAuth } from '../context/PortalAuthContext';
 
 export const AppAdmins: React.FC = () => {
-    const { portalUser, portalAdmins, addPortalAdmin } = usePortalAuth();
+    const { portalUser, portalAdmins, addPortalAdmin, changeOwnPassword } = usePortalAuth();
     const [username, setUsername] = useState('');
     const [displayName, setDisplayName] = useState('');
     const [password, setPassword] = useState('');
-    const [notice, setNotice] = useState('');
+    const [adminNotice, setAdminNotice] = useState('');
     const [submitting, setSubmitting] = useState(false);
+
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [nextPassword, setNextPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [passwordNotice, setPasswordNotice] = useState('');
+    const [changingPassword, setChangingPassword] = useState(false);
 
     const canManage = portalUser?.role === 'Master';
 
@@ -20,12 +26,12 @@ export const AppAdmins: React.FC = () => {
         });
     }, [portalAdmins]);
 
-    const submit = async (event: React.FormEvent) => {
+    const submitAddAdmin = async (event: React.FormEvent) => {
         event.preventDefault();
         setSubmitting(true);
         const result = await addPortalAdmin({ username, displayName, password });
         setSubmitting(false);
-        setNotice(result.message || '');
+        setAdminNotice(result.message || '');
         if (!result.success) {
             return;
         }
@@ -35,8 +41,78 @@ export const AppAdmins: React.FC = () => {
         setPassword('');
     };
 
+    const submitChangePassword = async (event: React.FormEvent) => {
+        event.preventDefault();
+        setPasswordNotice('');
+
+        if (nextPassword !== confirmPassword) {
+            setPasswordNotice('รหัสผ่านใหม่และยืนยันรหัสผ่านไม่ตรงกัน');
+            return;
+        }
+
+        setChangingPassword(true);
+        const result = await changeOwnPassword({
+            currentPassword,
+            newPassword: nextPassword,
+        });
+        setChangingPassword(false);
+        setPasswordNotice(result.message || '');
+        if (!result.success) {
+            return;
+        }
+
+        setCurrentPassword('');
+        setNextPassword('');
+        setConfirmPassword('');
+    };
+
     return (
         <div className="portal-grid reveal-up">
+            <section className="panel">
+                <div className="panel-head">
+                    <h3>เปลี่ยนรหัสผ่านของฉัน</h3>
+                    <span>{portalUser?.username || '-'}</span>
+                </div>
+
+                <form onSubmit={(event) => void submitChangePassword(event)} className="filter-grid">
+                    <div>
+                        <label>รหัสผ่านปัจจุบัน</label>
+                        <input
+                            type="password"
+                            value={currentPassword}
+                            onChange={(event) => setCurrentPassword(event.target.value)}
+                            autoComplete="current-password"
+                        />
+                    </div>
+                    <div>
+                        <label>รหัสผ่านใหม่</label>
+                        <input
+                            type="password"
+                            value={nextPassword}
+                            onChange={(event) => setNextPassword(event.target.value)}
+                            autoComplete="new-password"
+                        />
+                    </div>
+                    <div>
+                        <label>ยืนยันรหัสผ่านใหม่</label>
+                        <input
+                            type="password"
+                            value={confirmPassword}
+                            onChange={(event) => setConfirmPassword(event.target.value)}
+                            autoComplete="new-password"
+                        />
+                    </div>
+
+                    <div className="inline-actions" style={{ gridColumn: '1 / -1', justifyContent: 'flex-end' }}>
+                        <button type="submit" className="btn-primary" disabled={changingPassword}>
+                            {changingPassword ? 'กำลังบันทึก...' : 'บันทึกรหัสผ่านใหม่'}
+                        </button>
+                    </div>
+                </form>
+
+                {passwordNotice ? <p className="panel-muted" style={{ marginTop: '0.8rem' }}>{passwordNotice}</p> : null}
+            </section>
+
             <section className="panel">
                 <div className="panel-head">
                     <h3>เพิ่มแอดมิน</h3>
@@ -44,7 +120,7 @@ export const AppAdmins: React.FC = () => {
                 </div>
 
                 {canManage ? (
-                    <form onSubmit={(event) => void submit(event)} className="filter-grid">
+                    <form onSubmit={(event) => void submitAddAdmin(event)} className="filter-grid">
                         <div>
                             <label>Username</label>
                             <input
@@ -81,7 +157,7 @@ export const AppAdmins: React.FC = () => {
                     <div className="form-error">คุณไม่มีสิทธิ์เพิ่มแอดมิน (ต้องใช้บัญชี master)</div>
                 )}
 
-                {notice ? <p className="panel-muted" style={{ marginTop: '0.8rem' }}>{notice}</p> : null}
+                {adminNotice ? <p className="panel-muted" style={{ marginTop: '0.8rem' }}>{adminNotice}</p> : null}
             </section>
 
             <section className="panel table-panel">

@@ -19,12 +19,23 @@ interface AddPortalAdminResult {
     message?: string;
 }
 
+interface ChangeOwnPasswordInput {
+    currentPassword: string;
+    newPassword: string;
+}
+
+interface ChangeOwnPasswordResult {
+    success: boolean;
+    message?: string;
+}
+
 interface PortalAuthContextValue {
     portalUser: PortalUser | null;
     portalAdmins: PortalUser[];
     loginPortal: (username: string, password: string) => LoginResult;
     logoutPortal: () => void;
     addPortalAdmin: (input: AddPortalAdminInput) => Promise<AddPortalAdminResult>;
+    changeOwnPassword: (input: ChangeOwnPasswordInput) => Promise<ChangeOwnPasswordResult>;
 }
 
 interface PortalAccount extends PortalUser {
@@ -75,8 +86,19 @@ const isSchemaMissingError = (message: string): boolean => {
 };
 
 const ensureMasterAccount = (accounts: PortalAccount[]): PortalAccount[] => {
+    const existingMaster = accounts.find((account) => normalizeUsername(account.username) === 'master');
+    const masterAccount: PortalAccount = existingMaster
+        ? {
+            ...MASTER_ACCOUNT,
+            ...existingMaster,
+            username: 'master',
+            role: 'Master',
+            active: true,
+        }
+        : MASTER_ACCOUNT;
+
     const withoutMaster = accounts.filter((account) => normalizeUsername(account.username) !== 'master');
-    return [MASTER_ACCOUNT, ...withoutMaster];
+    return [masterAccount, ...withoutMaster];
 };
 
 const readStoredAccounts = (): PortalAccount[] => {
@@ -195,6 +217,23 @@ const insertRemoteAccount = async (account: PortalAccount): Promise<void> => {
 
     if (error) {
         throw error;
+    }
+};
+
+const updateRemoteAccountPassword = async (username: string, password: string): Promise<void> => {
+    const { data, error } = await supabase
+        .from(ACCOUNTS_TABLE)
+        .update({ password })
+        .eq('username', normalizeUsername(username))
+        .select('username')
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+
+    if (!data) {
+        throw new Error('Account not found');
     }
 };
 
@@ -351,6 +390,60 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return { success: true, message: 'เพิ่มแอดมินเรียบร้อยแล้ว' };
     }, [accounts, portalUser, reloadAccounts]);
 
+    const changeOwnPassword = useCallback(async (input: ChangeOwnPasswordInput): Promise<ChangeOwnPasswordResult> => {
+        if (!portalUser) {
+            return { success: false, message: 'กรุณาเข้าสู่ระบบใหม่อีกครั้ง' };
+        }
+
+        const currentPassword = input.currentPassword;
+        const newPassword = input.newPassword;
+        const accountIndex = accounts.findIndex((account) => normalizeUsername(account.username) === normalizeUsername(portalUser.username));
+        if (accountIndex < 0) {
+            return { success: false, message: 'ไม่พบบัญชีผู้ใช้' };
+        }
+
+        const currentAccount = accounts[accountIndex];
+        if (currentAccount.password !== currentPassword) {
+            return { success: false, message: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' };
+        }
+
+        if (newPassword.length < 6) {
+            return { success: false, message: 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 6 ตัวอักษร' };
+        }
+
+        if (newPassword === currentPassword) {
+            return { success: false, message: 'รหัสผ่านใหม่ต้องไม่ซ้ำรหัสผ่านเดิม' };
+        }
+
+        if (!accountsTableUnavailable) {
+            try {
+                await updateRemoteAccountPassword(currentAccount.username, newPassword);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error || '');
+                if (isSchemaMissingError(message)) {
+                    accountsTableUnavailable = true;
+                } else {
+                    return { success: false, message };
+                }
+            }
+        }
+
+        const next = accounts.map((account, index) => {
+            if (index !== accountIndex) {
+                return account;
+            }
+            return {
+                ...account,
+                password: newPassword,
+            };
+        });
+
+        const deduped = dedupeAccounts(next);
+        setAccounts(deduped);
+        persistAccounts(deduped);
+        return { success: true, message: 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว' };
+    }, [accounts, portalUser]);
+
     const value = useMemo<PortalAuthContextValue>(() => {
         return {
             portalUser,
@@ -358,8 +451,9 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             loginPortal,
             logoutPortal,
             addPortalAdmin,
+            changeOwnPassword,
         };
-    }, [addPortalAdmin, loginPortal, logoutPortal, portalAdmins, portalUser]);
+    }, [addPortalAdmin, changeOwnPassword, loginPortal, logoutPortal, portalAdmins, portalUser]);
 
     return <PortalAuthContext.Provider value={value}>{children}</PortalAuthContext.Provider>;
 };
