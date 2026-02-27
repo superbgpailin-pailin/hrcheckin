@@ -4,8 +4,8 @@ import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../t
 import { dayKey, estimatedCheckoutAt, lateMinutesForCheckIn, resolveShiftWindow } from '../utils/shiftUtils';
 
 const tableName = 'attendance';
-const localStorageKey = 'hrcheckin_attendance_v2';
 const duplicateCheckInMessage = 'มีการเช็คอินกะนี้แล้ว';
+const saveFailedMessage = 'บันทึกเช็คอินไม่สำเร็จบนเซิร์ฟเวอร์ กรุณาลองใหม่หรือติดต่อแอดมิน';
 
 interface AttendanceRow {
     id?: string | null;
@@ -32,16 +32,6 @@ interface NormalizedAttendanceRow {
     shift_name: string | null;
     site_id: string | null;
     type: 'check_in' | 'check_out' | null;
-}
-
-interface LocalCheckInRow {
-    id: string;
-    employee_id: string;
-    timestamp: string;
-    status: 'On Time' | 'Late';
-    shift_name: string;
-    site_id: string;
-    type: 'check_in';
 }
 
 interface AttendanceFilters {
@@ -131,18 +121,6 @@ const normalizeAttendanceRow = (row: AttendanceRow): NormalizedAttendanceRow => 
     };
 };
 
-const normalizeLocalRow = (row: LocalCheckInRow): NormalizedAttendanceRow => {
-    return {
-        id: row.id,
-        employee_id: row.employee_id,
-        timestamp: toIsoString(row.timestamp),
-        status: row.status,
-        shift_name: row.shift_name,
-        site_id: row.site_id,
-        type: row.type,
-    };
-};
-
 const withinFilters = (row: Pick<NormalizedAttendanceRow, 'employee_id' | 'timestamp'>, filters: AttendanceFilters): boolean => {
     if (filters.employeeId && row.employee_id !== filters.employeeId) {
         return false;
@@ -157,22 +135,6 @@ const withinFilters = (row: Pick<NormalizedAttendanceRow, 'employee_id' | 'times
     }
 
     return true;
-};
-
-const readLocalRows = (): LocalCheckInRow[] => {
-    try {
-        const raw = localStorage.getItem(localStorageKey);
-        if (!raw) {
-            return [];
-        }
-        return JSON.parse(raw) as LocalCheckInRow[];
-    } catch {
-        return [];
-    }
-};
-
-const writeLocalRows = (rows: LocalCheckInRow[]): void => {
-    localStorage.setItem(localStorageKey, JSON.stringify(rows));
 };
 
 const shiftByNameOrId = (nameOrId: string, shifts: ShiftDefinition[]): ShiftDefinition => {
@@ -356,21 +318,7 @@ const insertWithLegacyPayloadFallback = async (payload: Record<string, string | 
         workingPayload = nextPayload;
     }
 
-    throw new Error(lastMessage || 'ไม่สามารถบันทึกเช็คอินได้');
-};
-
-const dedupeRows = (rows: NormalizedAttendanceRow[]): NormalizedAttendanceRow[] => {
-    const map = new Map<string, NormalizedAttendanceRow>();
-
-    rows.forEach((row) => {
-        const key = `${row.employee_id}|${row.timestamp}|${row.shift_name || ''}|${row.type || 'check_in'}`;
-        if (!map.has(key)) {
-            map.set(key, row);
-        }
-    });
-
-    return Array.from(map.values())
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    throw new Error(lastMessage || saveFailedMessage);
 };
 
 export const appAttendanceService = {
@@ -385,17 +333,13 @@ export const appAttendanceService = {
         const lateMinutes = lateMinutesForCheckIn(now, shift, graceMinutes);
         const status: 'On Time' | 'Late' = lateMinutes > 0 ? 'Late' : 'On Time';
 
-        let existingRows: NormalizedAttendanceRow[] = [];
         try {
-            existingRows = await loadRowsFromSupabase({ employeeId: employee.id });
+            const existingRows = await loadRowsFromSupabase({ employeeId: employee.id });
+            if (hasDuplicateWithinShiftWindow(existingRows, employee.id, shift, now)) {
+                throw new Error(duplicateCheckInMessage);
+            }
         } catch {
-            existingRows = [];
-        }
-
-        const localRows = readLocalRows().map(normalizeLocalRow);
-        const rowsForDuplicateCheck = dedupeRows([...existingRows, ...localRows]);
-        if (hasDuplicateWithinShiftWindow(rowsForDuplicateCheck, employee.id, shift, now)) {
-            throw new Error(duplicateCheckInMessage);
+            // Skip pre-check when read fails; uniqueness is still enforced on insert.
         }
 
         const payload: Record<string, string | number> = {
@@ -419,42 +363,25 @@ export const appAttendanceService = {
 
         try {
             await insertWithLegacyPayloadFallback(payload);
-
-            const remoteRow: NormalizedAttendanceRow = {
-                id: `REMOTE-${Date.now()}`,
-                employee_id: employee.id,
-                timestamp: nowIso,
-                status,
-                shift_name: shift.id,
-                site_id: kioskId,
-                type: 'check_in',
-            };
-
-            return toSummary(remoteRow, [shift], new Map([[employee.id, employee]]), graceMinutes);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error || '');
             if (message === duplicateCheckInMessage || isDuplicateInsertError(message)) {
                 throw new Error(duplicateCheckInMessage);
             }
-
-            const freshLocalRows = readLocalRows().map(normalizeLocalRow);
-            if (hasDuplicateWithinShiftWindow(freshLocalRows, employee.id, shift, now)) {
-                throw new Error(duplicateCheckInMessage);
-            }
-
-            const localRow: LocalCheckInRow = {
-                id: `LOCAL-${Date.now()}`,
-                employee_id: employee.id,
-                timestamp: nowIso,
-                status,
-                shift_name: shift.id,
-                site_id: kioskId,
-                type: 'check_in',
-            };
-
-            writeLocalRows([localRow, ...readLocalRows()]);
-            return toSummary(normalizeLocalRow(localRow), [shift], new Map([[employee.id, employee]]), graceMinutes);
+            throw new Error(saveFailedMessage);
         }
+
+        const remoteRow: NormalizedAttendanceRow = {
+            id: `REMOTE-${Date.now()}`,
+            employee_id: employee.id,
+            timestamp: nowIso,
+            status,
+            shift_name: shift.id,
+            site_id: kioskId,
+            type: 'check_in',
+        };
+
+        return toSummary(remoteRow, [shift], new Map([[employee.id, employee]]), graceMinutes);
     },
 
     async listCheckIns(
@@ -465,18 +392,11 @@ export const appAttendanceService = {
     ): Promise<AttendanceSummaryRecord[]> {
         const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
 
-        const localRows = readLocalRows()
-            .map(normalizeLocalRow)
-            .filter((row) => withinFilters(row, filters));
-
-        let remoteRows: NormalizedAttendanceRow[] = [];
         try {
-            remoteRows = await loadRowsFromSupabase(filters);
+            const remoteRows = await loadRowsFromSupabase(filters);
+            return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
         } catch {
-            remoteRows = [];
+            return [];
         }
-
-        const mergedRows = dedupeRows([...remoteRows, ...localRows]);
-        return mergedRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
     },
 };
