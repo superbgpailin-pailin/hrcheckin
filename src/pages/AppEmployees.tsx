@@ -631,7 +631,7 @@ export const AppEmployees: React.FC = () => {
                         <thead>
                             <tr>
                                 <th>รหัส</th>
-                                <th>ชื่อ</th>
+                                <th>ชื่อเล่น</th>
                                 <th>แผนก</th>
                                 <th>ตำแหน่ง</th>
                                 <th>สถานะ</th>
@@ -643,8 +643,7 @@ export const AppEmployees: React.FC = () => {
                                 <tr key={employee.id}>
                                     <td>{employee.id}</td>
                                     <td>
-                                        <strong>{employee.firstNameTH} {employee.lastNameTH}</strong>
-                                        <div className="panel-muted">{employee.firstNameEN} {employee.lastNameEN}</div>
+                                        <strong>{employee.nickname.trim() || '-'}</strong>
                                     </td>
                                     <td>{employee.department}</td>
                                     <td>{employee.position}</td>
