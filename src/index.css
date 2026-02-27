@@ -709,6 +709,29 @@ select:focus {
     gap: 0.7rem;
 }
 
+.settings-subnav {
+    display: inline-flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+}
+
+.settings-subnav-btn {
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #0f172a;
+    border-radius: 10px;
+    padding: 0.52rem 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.settings-subnav-btn.active {
+    border-color: transparent;
+    color: #fff;
+    background: linear-gradient(120deg, #06b6d4, #0284c7);
+    box-shadow: 0 10px 22px rgba(2, 132, 199, 0.24);
+}
+
 .late-rule-list {
     display: grid;
     gap: 0.7rem;

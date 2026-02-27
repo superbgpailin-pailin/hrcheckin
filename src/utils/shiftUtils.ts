@@ -62,20 +62,16 @@ export const getAvailableShifts = (
     employeeRole: AppEmployee['role'],
     config: AppSystemConfig,
 ): ShiftDefinition[] => {
-    if (isControlDay(atDate, config)) {
-        return config.shifts.filter((shift) => shift.isControlShift);
-    }
+    void atDate;
+    void employeeRole;
 
+    const seen = new Set<string>();
     return config.shifts.filter((shift) => {
-        if (shift.isControlShift) {
+        if (seen.has(shift.id)) {
             return false;
         }
-
-        if (!shift.supervisorOnly) {
-            return true;
-        }
-
-        return employeeRole === 'Supervisor';
+        seen.add(shift.id);
+        return true;
     });
 };
 
@@ -84,16 +80,22 @@ export const resolveShiftWindow = (checkInAt: Date, shift: ShiftDefinition): { s
     const endMinutes = parseTimeToMinutes(shift.end);
     const crossesMidnight = endMinutes <= startMinutes;
 
-    const start = new Date(checkInAt);
-    start.setSeconds(0, 0);
-    const checkInMinutes = checkInAt.getHours() * 60 + checkInAt.getMinutes();
+    const dayStart = new Date(checkInAt);
+    dayStart.setHours(0, 0, 0, 0);
 
-    if (crossesMidnight && checkInMinutes < endMinutes) {
-        start.setDate(start.getDate() - 1);
+    const startToday = new Date(dayStart);
+    startToday.setMinutes(startMinutes);
+
+    let start = startToday;
+    if (crossesMidnight) {
+        const startYesterday = new Date(startToday);
+        startYesterday.setDate(startYesterday.getDate() - 1);
+
+        const diffToday = Math.abs(checkInAt.getTime() - startToday.getTime());
+        const diffYesterday = Math.abs(checkInAt.getTime() - startYesterday.getTime());
+
+        start = diffYesterday < diffToday ? startYesterday : startToday;
     }
-
-    start.setHours(0, 0, 0, 0);
-    start.setMinutes(startMinutes);
 
     const durationMinutes = crossesMidnight
         ? (MINUTES_PER_DAY - startMinutes) + endMinutes

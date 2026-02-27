@@ -97,12 +97,16 @@ export const AppAttendance: React.FC = () => {
 
     const [records, setRecords] = useState<AttendanceSummaryRecord[]>([]);
     const [loading, setLoading] = useState(true);
+    const [deletingId, setDeletingId] = useState('');
+    const [notice, setNotice] = useState('');
+    const [error, setError] = useState('');
     const [fromDate, setFromDate] = useState(new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
     const [toDate, setToDate] = useState(new Date().toISOString().slice(0, 10));
     const [employeeId, setEmployeeId] = useState('all');
 
     const load = async () => {
         setLoading(true);
+        setError('');
         const result = await appAttendanceService.listCheckIns(
             config.shifts,
             employees,
@@ -115,6 +119,29 @@ export const AppAttendance: React.FC = () => {
         );
         setRecords(result);
         setLoading(false);
+    };
+
+    const deleteCheckIn = async (record: AttendanceSummaryRecord) => {
+        const shouldDelete = window.confirm(
+            `ลบรายการเช็คอิน ${record.employeeId} เวลา ${formatThaiDateTime(record.checkInAt)} ใช่หรือไม่`,
+        );
+        if (!shouldDelete) {
+            return;
+        }
+
+        setDeletingId(record.id);
+        setError('');
+        setNotice('');
+
+        try {
+            await appAttendanceService.deleteCheckIn(record.id);
+            setNotice('ลบรายการเช็คอินเรียบร้อยแล้ว');
+            await load();
+        } catch (deleteError) {
+            setError(deleteError instanceof Error ? deleteError.message : 'ลบรายการไม่สำเร็จ');
+        } finally {
+            setDeletingId('');
+        }
     };
 
     useEffect(() => {
@@ -267,6 +294,8 @@ export const AppAttendance: React.FC = () => {
                         <button type="button" className="btn-muted" onClick={exportCheckInCsv}>Export Log เช็คอิน</button>
                     </div>
                 </div>
+                {error ? <div className="form-error">{error}</div> : null}
+                {notice ? <p className="panel-muted">{notice}</p> : null}
             </section>
 
             <section className="panel table-panel">
@@ -340,6 +369,7 @@ export const AppAttendance: React.FC = () => {
                                     <th>เวลาสิ้นสุดกะ (ประมาณ)</th>
                                     <th>สถานะ</th>
                                     <th>สาย (นาที)</th>
+                                    <th />
                                 </tr>
                             </thead>
                             <tbody>
@@ -358,6 +388,16 @@ export const AppAttendance: React.FC = () => {
                                             </span>
                                         </td>
                                         <td>{record.lateMinutes}</td>
+                                        <td>
+                                            <button
+                                                type="button"
+                                                className="btn-danger"
+                                                onClick={() => void deleteCheckIn(record)}
+                                                disabled={deletingId === record.id}
+                                            >
+                                                {deletingId === record.id ? 'กำลังลบ...' : 'ลบ'}
+                                            </button>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>

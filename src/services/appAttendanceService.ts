@@ -1,10 +1,10 @@
 import { supabase } from '../lib/supabaseClient';
 import { DEFAULT_SHIFTS } from '../data/appDefaults';
 import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../types/app';
-import { dayKey, estimatedCheckoutAt, lateMinutesForCheckIn, resolveShiftWindow } from '../utils/shiftUtils';
+import { dayKey, estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils';
 
 const tableName = 'attendance';
-const duplicateCheckInMessage = 'มีการเช็คอินกะนี้แล้ว';
+const duplicateCheckInMessage = 'วันนี้เช็คอินแล้ว';
 const saveFailedMessage = 'บันทึกเช็คอินไม่สำเร็จบนเซิร์ฟเวอร์ กรุณาลองใหม่หรือติดต่อแอดมิน';
 
 interface AttendanceRow {
@@ -139,12 +139,13 @@ const withinFilters = (row: Pick<NormalizedAttendanceRow, 'employee_id' | 'times
 
 const shiftByNameOrId = (nameOrId: string, shifts: ShiftDefinition[]): ShiftDefinition => {
     const source = shifts.length ? shifts : DEFAULT_SHIFTS;
-    const byId = source.find((shift) => shift.id === nameOrId);
+    const normalized = nameOrId.trim().toLowerCase();
+    const byId = source.find((shift) => shift.id.toLowerCase() === normalized);
     if (byId) {
         return byId;
     }
 
-    const byLabel = source.find((shift) => shift.label === nameOrId);
+    const byLabel = source.find((shift) => shift.label.toLowerCase() === normalized);
     if (byLabel) {
         return byLabel;
     }
@@ -182,26 +183,21 @@ const toSummary = (
     };
 };
 
-const hasDuplicateWithinShiftWindow = (
-    rows: Array<Pick<NormalizedAttendanceRow, 'employee_id' | 'timestamp' | 'shift_name' | 'type'>>,
-    employeeId: string,
-    shift: ShiftDefinition,
-    checkInAt: Date,
-): boolean => {
-    const { start, end } = resolveShiftWindow(checkInAt, shift);
+const dayKeyBangkok = (iso: string): string => {
+    return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+};
 
+const hasDuplicateOnDay = (
+    rows: Array<Pick<NormalizedAttendanceRow, 'employee_id' | 'timestamp' | 'type'>>,
+    employeeId: string,
+    checkInAtIso: string,
+): boolean => {
+    const targetDay = dayKeyBangkok(checkInAtIso);
     return rows.some((row) => {
         if (row.employee_id !== employeeId || row.type !== 'check_in') {
             return false;
         }
-
-        const rowShift = row.shift_name || '';
-        if (rowShift !== shift.id && rowShift !== shift.label) {
-            return false;
-        }
-
-        const at = new Date(row.timestamp).getTime();
-        return at >= start.getTime() && at <= end.getTime();
+        return dayKeyBangkok(row.timestamp) === targetDay;
     });
 };
 
@@ -293,7 +289,8 @@ const removeColumnsByMessage = (
 const isDuplicateInsertError = (message: string): boolean => {
     const normalized = message.toLowerCase();
     return normalized.includes('duplicate key')
-        || normalized.includes('ux_attendance_checkin_per_shift_day');
+        || normalized.includes('ux_attendance_checkin_per_shift_day')
+        || normalized.includes('ux_attendance_checkin_per_day');
 };
 
 const insertWithLegacyPayloadFallback = async (payload: Record<string, string | number>): Promise<void> => {
@@ -324,22 +321,18 @@ const insertWithLegacyPayloadFallback = async (payload: Record<string, string | 
 export const appAttendanceService = {
     async recordCheckIn(
         employee: AppEmployee,
-        shift: ShiftDefinition,
+        selectedShift: ShiftDefinition,
         kioskId: string,
         graceMinutes: number,
     ): Promise<AttendanceSummaryRecord> {
         const now = new Date();
         const nowIso = now.toISOString();
-        const lateMinutes = lateMinutesForCheckIn(now, shift, graceMinutes);
+        const lateMinutes = lateMinutesForCheckIn(now, selectedShift, graceMinutes);
         const status: 'On Time' | 'Late' = lateMinutes > 0 ? 'Late' : 'On Time';
 
-        try {
-            const existingRows = await loadRowsFromSupabase({ employeeId: employee.id });
-            if (hasDuplicateWithinShiftWindow(existingRows, employee.id, shift, now)) {
-                throw new Error(duplicateCheckInMessage);
-            }
-        } catch {
-            // Skip pre-check when read fails; uniqueness is still enforced on insert.
+        const existingRows = await loadRowsFromSupabase({ employeeId: employee.id }).catch(() => null);
+        if (existingRows && hasDuplicateOnDay(existingRows, employee.id, nowIso)) {
+            throw new Error(duplicateCheckInMessage);
         }
 
         const payload: Record<string, string | number> = {
@@ -357,8 +350,8 @@ export const appAttendanceService = {
             lng: 0,
             photo_url: '',
             status,
-            shift_name: shift.id,
-            shift: shift.id,
+            shift_name: selectedShift.id,
+            shift: selectedShift.id,
         };
 
         try {
@@ -376,12 +369,12 @@ export const appAttendanceService = {
             employee_id: employee.id,
             timestamp: nowIso,
             status,
-            shift_name: shift.id,
+            shift_name: selectedShift.id,
             site_id: kioskId,
             type: 'check_in',
         };
 
-        return toSummary(remoteRow, [shift], new Map([[employee.id, employee]]), graceMinutes);
+        return toSummary(remoteRow, [selectedShift], new Map([[employee.id, employee]]), graceMinutes);
     },
 
     async listCheckIns(
@@ -397,6 +390,17 @@ export const appAttendanceService = {
             return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
         } catch {
             return [];
+        }
+    },
+
+    async deleteCheckIn(recordId: string): Promise<void> {
+        const { error } = await supabase
+            .from(tableName)
+            .delete()
+            .eq('id', recordId);
+
+        if (error) {
+            throw new Error(error.message);
         }
     },
 };
