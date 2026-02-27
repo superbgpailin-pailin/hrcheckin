@@ -263,15 +263,17 @@ const updateRemoteAccountPassword = async (username: string, password: string): 
     return typeof count === 'number' ? count : 0;
 };
 
-const updateRemoteAccount = async (username: string, payload: Record<string, string>): Promise<void> => {
-    const { error } = await supabase
+const updateRemoteAccount = async (username: string, payload: Record<string, string>): Promise<number> => {
+    const { error, count } = await supabase
         .from(ACCOUNTS_TABLE)
-        .update(payload)
+        .update(payload, { count: 'exact' })
         .eq('username', normalizeUsername(username));
 
     if (error) {
         throw error;
     }
+
+    return typeof count === 'number' ? count : 0;
 };
 
 const deleteRemoteAccount = async (username: string): Promise<void> => {
@@ -321,7 +323,8 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 remoteAccounts = dedupeAccounts(await fetchRemoteAccounts());
             }
 
-            const merged = dedupeAccounts([...remoteAccounts, ...localAccounts]);
+            // Remote is the source of truth for passwords and admin account state.
+            const merged = dedupeAccounts([...localAccounts, ...remoteAccounts]);
             setAccounts(merged);
             persistAccounts(merged);
         } catch (error) {
@@ -476,11 +479,16 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 if (nextPassword) {
                     remotePayload.password = nextPassword;
                 }
-                await updateRemoteAccount(username, remotePayload);
+                const updatedRows = await updateRemoteAccount(username, remotePayload);
+                if (updatedRows < 1) {
+                    return { success: false, message: 'No account row was updated on server.' };
+                }
             } catch (error) {
                 const message = getErrorMessage(error);
                 if (isSchemaMissingError(message)) {
                     accountsTableUnavailable = true;
+                } else if (message.toLowerCase().includes('duplicate key')) {
+                    return { success: false, message: 'Server rejected update (duplicate key).' };
                 } else {
                     return { success: false, message };
                 }
@@ -502,8 +510,9 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const deduped = dedupeAccounts(next);
         setAccounts(deduped);
         persistAccounts(deduped);
+        await reloadAccounts();
         return { success: true, message: 'Admin updated successfully.' };
-    }, [accounts, portalUser]);
+    }, [accounts, portalUser, reloadAccounts]);
 
     const deletePortalAdmin = useCallback(async (usernameInput: string): Promise<DeletePortalAdminResult> => {
         if (!portalUser || portalUser.role !== 'Master') {
