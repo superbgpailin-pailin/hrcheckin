@@ -60,7 +60,9 @@ export const AppAdmins: React.FC = () => {
         setPasswordNotice('');
 
         if (nextPassword !== confirmPassword) {
-            setPasswordNotice('รหัสผ่านใหม่และยืนยันรหัสผ่านไม่ตรงกัน');
+            const message = 'New password and confirm password do not match.';
+            setPasswordNotice(message);
+            window.alert(message);
             return;
         }
 
@@ -70,7 +72,9 @@ export const AppAdmins: React.FC = () => {
                 currentPassword,
                 newPassword: nextPassword,
             });
-            setPasswordNotice(result.message || (result.success ? 'Password updated.' : 'Password update failed.'));
+            const message = result.message || (result.success ? 'Password updated successfully.' : 'Password update failed.');
+            setPasswordNotice(message);
+            window.alert(message);
             if (!result.success) {
                 return;
             }
@@ -79,7 +83,9 @@ export const AppAdmins: React.FC = () => {
             setNextPassword('');
             setConfirmPassword('');
         } catch (error) {
-            setPasswordNotice(error instanceof Error ? error.message : 'Password update failed.');
+            const message = error instanceof Error ? error.message : 'Password update failed.';
+            setPasswordNotice(message);
+            window.alert(message);
         } finally {
             setChangingPassword(false);
         }

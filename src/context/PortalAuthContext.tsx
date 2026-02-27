@@ -250,15 +250,17 @@ const insertRemoteAccount = async (account: PortalAccount): Promise<void> => {
     }
 };
 
-const updateRemoteAccountPassword = async (username: string, password: string): Promise<void> => {
-    const { error } = await supabase
+const updateRemoteAccountPassword = async (username: string, password: string): Promise<number> => {
+    const { error, count } = await supabase
         .from(ACCOUNTS_TABLE)
-        .update({ password })
+        .update({ password }, { count: 'exact' })
         .eq('username', normalizeUsername(username));
 
     if (error) {
         throw error;
     }
+
+    return typeof count === 'number' ? count : 0;
 };
 
 const updateRemoteAccount = async (username: string, payload: Record<string, string>): Promise<void> => {
@@ -571,11 +573,24 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
         if (!accountsTableUnavailable) {
             try {
-                await updateRemoteAccountPassword(currentAccount.username, newPassword);
+                const updatedRows = await updateRemoteAccountPassword(currentAccount.username, newPassword);
+                if (updatedRows < 1) {
+                    const normalizedCurrentUsername = normalizeUsername(currentAccount.username);
+                    if (normalizedCurrentUsername === 'master') {
+                        return { success: false, message: 'Unable to update master password on server.' };
+                    }
+
+                    await insertRemoteAccount({
+                        ...currentAccount,
+                        password: newPassword,
+                    });
+                }
             } catch (error) {
                 const message = getErrorMessage(error);
                 if (isSchemaMissingError(message)) {
                     accountsTableUnavailable = true;
+                } else if (message.toLowerCase().includes('duplicate key')) {
+                    return { success: false, message: 'Password update was blocked by database policy.' };
                 } else {
                     return { success: false, message };
                 }
