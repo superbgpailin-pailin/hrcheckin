@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react';
+﻿import React, { useMemo, useState } from 'react';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { usePortalAuth } from '../context/PortalAuthContext';
 import type { LatePenaltyRule } from '../types/app';
 import { controlDayForMonth, monthKey } from '../utils/shiftUtils';
 
-type SettingsTab = 'shift' | 'late';
+type SettingsTab = 'shift' | 'late' | 'employee-options';
+type EmployeeOptionKey = 'departments' | 'positions' | 'roles' | 'statuses';
 
 const createLateRuleId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -133,6 +134,54 @@ export const AppSettings: React.FC = () => {
 
     const canEditAdvanced = portalUser?.role === 'Master' || portalUser?.role === 'Admin';
 
+    const updateEmployeeOption = (key: EmployeeOptionKey, index: number, value: string) => {
+        setConfig((prev) => {
+            const nextValues = [...prev.employeeFieldOptions[key]];
+            nextValues[index] = value;
+            return {
+                ...prev,
+                employeeFieldOptions: {
+                    ...prev.employeeFieldOptions,
+                    [key]: nextValues,
+                },
+            };
+        });
+    };
+
+    const addEmployeeOption = (key: EmployeeOptionKey) => {
+        setConfig((prev) => ({
+            ...prev,
+            employeeFieldOptions: {
+                ...prev.employeeFieldOptions,
+                [key]: [...prev.employeeFieldOptions[key], ''],
+            },
+        }));
+    };
+
+    const removeEmployeeOption = (key: EmployeeOptionKey, index: number) => {
+        setConfig((prev) => {
+            const values = prev.employeeFieldOptions[key];
+            if (values.length <= 1) {
+                return prev;
+            }
+
+            return {
+                ...prev,
+                employeeFieldOptions: {
+                    ...prev.employeeFieldOptions,
+                    [key]: values.filter((_, itemIndex) => itemIndex !== index),
+                },
+            };
+        });
+    };
+
+    const optionGroups: Array<{ key: EmployeeOptionKey; label: string }> = [
+        { key: 'departments', label: 'แผนก' },
+        { key: 'positions', label: 'ตำแหน่ง' },
+        { key: 'roles', label: 'บทบาท' },
+        { key: 'statuses', label: 'สถานะ' },
+    ];
+
     return (
         <div className="portal-grid reveal-up">
             <section className="panel">
@@ -150,6 +199,13 @@ export const AppSettings: React.FC = () => {
                         onClick={() => setActiveTab('late')}
                     >
                         ตั้งค่ามาสาย
+                    </button>
+                    <button
+                        type="button"
+                        className={`settings-subnav-btn ${activeTab === 'employee-options' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('employee-options')}
+                    >
+                        ตั้งค่าตัวเลือก
                     </button>
                 </div>
             </section>
@@ -368,6 +424,56 @@ export const AppSettings: React.FC = () => {
                 </>
             ) : null}
 
+            {activeTab === 'employee-options' ? (
+                <section className="panel">
+                    <div className="panel-head">
+                        <h3>ตั้งค่าตัวเลือกดรอปดาวน์ข้อมูลพนักงาน</h3>
+                    </div>
+
+                    <p className="panel-muted">
+                        ใช้สำหรับตัวเลือกในฟอร์มพนักงาน: แผนก, ตำแหน่ง, บทบาท, สถานะ
+                    </p>
+
+                    {optionGroups.map((group) => (
+                        <div key={group.key} className="late-rule-card" style={{ marginBottom: '1rem' }}>
+                            <div className="panel-head" style={{ marginBottom: '0.45rem' }}>
+                                <strong>{group.label}</strong>
+                                <button
+                                    type="button"
+                                    className="btn-muted"
+                                    onClick={() => addEmployeeOption(group.key)}
+                                >
+                                    เพิ่มตัวเลือก
+                                </button>
+                            </div>
+
+                            <div className="filter-grid">
+                                {config.employeeFieldOptions[group.key].map((value, index) => (
+                                    <div key={`${group.key}-${index}`}>
+                                        <label>{group.label} #{index + 1}</label>
+                                        <div className="inline-actions">
+                                            <input
+                                                value={value}
+                                                onChange={(event) => updateEmployeeOption(group.key, index, event.target.value)}
+                                                placeholder={`ระบุ${group.label}`}
+                                            />
+                                            <button
+                                                type="button"
+                                                className="btn-danger"
+                                                onClick={() => removeEmployeeOption(group.key, index)}
+                                                disabled={config.employeeFieldOptions[group.key].length <= 1}
+                                            >
+                                                ลบ
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </section>
+            ) : null}
+
             <section className="panel">
                 <div className="inline-actions" style={{ justifyContent: 'space-between' }}>
                     <p className="panel-muted">{notice}</p>
@@ -379,3 +485,4 @@ export const AppSettings: React.FC = () => {
         </div>
     );
 };
+

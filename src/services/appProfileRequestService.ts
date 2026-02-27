@@ -41,7 +41,7 @@ interface ProfileRequestRow {
 interface EmployeeRow {
     id: string;
     role: string | null;
-    status: AppEmployee['status'] | null;
+    status: string | null;
     photo_url: string | null;
 }
 
@@ -128,7 +128,7 @@ const roleFromEmployeeRow = (row: EmployeeRow | null): AppEmployee['role'] => {
         return 'Employee';
     }
 
-    return row.role === 'Supervisor' ? 'Supervisor' : 'Employee';
+    return (row.role || 'Employee') as AppEmployee['role'];
 };
 
 const statusFromEmployeeRow = (row: EmployeeRow | null): AppEmployee['status'] => {
@@ -136,7 +136,7 @@ const statusFromEmployeeRow = (row: EmployeeRow | null): AppEmployee['status'] =
         return 'Active';
     }
 
-    return row.status || 'Active';
+    return (row.status || 'Active') as AppEmployee['status'];
 };
 
 const validateDraft = (draft: EmployeeProfileDraft): void => {

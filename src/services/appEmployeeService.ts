@@ -13,7 +13,7 @@ interface EmployeeRow {
     nickname: string | null;
     position: string | null;
     department: string | null;
-    status: AppEmployee['status'] | null;
+    status: string | null;
     pin: string | null;
     email: string | null;
     phone_number: string | null;
@@ -41,7 +41,7 @@ const legacyOptionalColumns = [
 const sanitizePin = (value: string): string => value.replace(/\D/g, '').slice(0, 6);
 
 const toAppEmployee = (row: EmployeeRow): AppEmployee => {
-    const role: AppEmployee['role'] = row.role === 'Supervisor' ? 'Supervisor' : 'Employee';
+    const role = (row.role || 'Employee') as AppEmployee['role'];
     const fallbackPhoto = `https://ui-avatars.com/api/?name=${encodeURIComponent(row.id)}&background=334155&color=fff`;
 
     return {
@@ -54,7 +54,7 @@ const toAppEmployee = (row: EmployeeRow): AppEmployee => {
         nickname: row.nickname || row.first_name_en || row.id,
         position: row.position || '-',
         department: row.department || '-',
-        status: row.status || 'Active',
+        status: (row.status || 'Active') as AppEmployee['status'],
         photoUrl: row.photo_url || fallbackPhoto,
         pin: row.pin || '123456',
         email: row.email || '',

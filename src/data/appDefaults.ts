@@ -56,6 +56,13 @@ export const DEFAULT_LATE_RULES: LatePenaltyRule[] = [
     },
 ];
 
+export const DEFAULT_EMPLOYEE_FIELD_OPTIONS: AppSystemConfig['employeeFieldOptions'] = {
+    departments: ['HR', 'Operations'],
+    positions: ['Supervisor', 'Staff'],
+    roles: ['Employee', 'Supervisor'],
+    statuses: ['Active', 'OnLeave', 'Resigned'],
+};
+
 export const DEFAULT_CONFIG: AppSystemConfig = {
     companyName: 'HR CheckIn',
     qrSecret: 'CHANGE_ME_QR_SECRET_2026',
@@ -68,6 +75,7 @@ export const DEFAULT_CONFIG: AppSystemConfig = {
         enabled: true,
         overrides: {},
     },
+    employeeFieldOptions: DEFAULT_EMPLOYEE_FIELD_OPTIONS,
 };
 
 export const FALLBACK_EMPLOYEES: AppEmployee[] = [

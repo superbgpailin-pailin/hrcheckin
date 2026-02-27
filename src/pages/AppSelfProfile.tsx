@@ -1,5 +1,6 @@
 ﻿import React, { useState } from 'react';
 import { useAppLanguage } from '../context/AppLanguageContext';
+import { useAppSettings } from '../context/AppSettingsContext';
 import type { EmployeeProfileDraft } from '../types/app';
 import { appEmployeeService } from '../services/appEmployeeService';
 import { appFileUploadService } from '../services/appFileUploadService';
@@ -149,6 +150,7 @@ const cleanLegacyValue = (value: string): string => {
 
 export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
     const { language, toggleLanguage } = useAppLanguage();
+    const { config } = useAppSettings();
     const t = TEXT[language];
 
     const [step, setStep] = useState<AccessStep>('verify');
@@ -167,6 +169,44 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
     const update = <K extends keyof EmployeeProfileDraft>(key: K, value: EmployeeProfileDraft[K]) => {
         setDraft((prev) => ({ ...prev, [key]: value }));
     };
+
+    const withCurrentOption = (options: string[], currentValue: string): string[] => {
+        const normalizedCurrent = currentValue.trim();
+        if (!normalizedCurrent) {
+            return options;
+        }
+
+        const hasCurrent = options.some((option) => option.trim().toLowerCase() === normalizedCurrent.toLowerCase());
+        return hasCurrent ? options : [normalizedCurrent, ...options];
+    };
+
+    const normalizeOptions = (values: string[], fallback: string[]): string[] => {
+        const seen = new Set<string>();
+        const result = values
+            .map((value) => value.trim())
+            .filter((value) => {
+                if (!value) {
+                    return false;
+                }
+                const key = value.toLowerCase();
+                if (seen.has(key)) {
+                    return false;
+                }
+                seen.add(key);
+                return true;
+            });
+
+        return result.length > 0 ? result : fallback;
+    };
+
+    const departmentOptions = withCurrentOption(
+        normalizeOptions(config.employeeFieldOptions.departments, ['HR', 'Operations']),
+        draft.department,
+    );
+    const positionOptions = withCurrentOption(
+        normalizeOptions(config.employeeFieldOptions.positions, ['Staff', 'Supervisor']),
+        draft.position,
+    );
 
     const resetToVerifyStep = () => {
         setStep('verify');
@@ -431,11 +471,19 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                             </div>
                             <div>
                                 <label>{t.labels.position}</label>
-                                <input value={draft.position} onChange={(event) => update('position', event.target.value)} />
+                                <select value={draft.position} onChange={(event) => update('position', event.target.value)}>
+                                    {positionOptions.map((option) => (
+                                        <option key={option} value={option}>{option}</option>
+                                    ))}
+                                </select>
                             </div>
                             <div>
                                 <label>{t.labels.department}</label>
-                                <input value={draft.department} onChange={(event) => update('department', event.target.value)} />
+                                <select value={draft.department} onChange={(event) => update('department', event.target.value)}>
+                                    {departmentOptions.map((option) => (
+                                        <option key={option} value={option}>{option}</option>
+                                    ))}
+                                </select>
                             </div>
                             <div>
                                 <label>{t.labels.email}</label>

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useAppEmployees } from '../context/AppEmployeeContext';
+import { useAppSettings } from '../context/AppSettingsContext';
 import type { AppEmployee } from '../types/app';
 import { appFileUploadService } from '../services/appFileUploadService';
 import { downloadCsv } from '../utils/csv';
@@ -76,10 +77,21 @@ const getEmployeeIdsFromRange = (value: string): { ids: string[]; error?: undefi
     return { ids };
 };
 
-const createNewEmployee = (id: string): AppEmployee => {
+interface EmployeeFieldOptions {
+    departments: string[];
+    positions: string[];
+    roles: string[];
+    statuses: string[];
+}
+
+const createNewEmployee = (
+    id: string,
+    role: AppEmployee['role'] = 'Employee',
+    status: AppEmployee['status'] = 'Active',
+): AppEmployee => {
     return {
         id,
-        role: 'Employee',
+        role,
         firstNameTH: '',
         lastNameTH: '',
         firstNameEN: '',
@@ -87,7 +99,7 @@ const createNewEmployee = (id: string): AppEmployee => {
         nickname: '',
         position: '',
         department: '',
-        status: 'Active',
+        status,
         photoUrl: `https://ui-avatars.com/api/?name=${id}&background=6366f1&color=fff`,
         pin: '111111',
         email: '',
@@ -105,6 +117,7 @@ const createNewEmployee = (id: string): AppEmployee => {
 
 interface EmployeeEditorProps {
     employee: AppEmployee;
+    fieldOptions: EmployeeFieldOptions;
     onCancel: () => void;
     onSubmit: (employee: AppEmployee) => Promise<void>;
 }
@@ -114,7 +127,17 @@ interface EmployeeViewerProps {
     onClose: () => void;
 }
 
-const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, onCancel, onSubmit }) => {
+const withCurrentOption = (options: string[], currentValue: string): string[] => {
+    const normalizedCurrent = currentValue.trim();
+    if (!normalizedCurrent) {
+        return options;
+    }
+
+    const hasCurrent = options.some((option) => option.trim().toLowerCase() === normalizedCurrent.toLowerCase());
+    return hasCurrent ? options : [normalizedCurrent, ...options];
+};
+
+const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, fieldOptions, onCancel, onSubmit }) => {
     const [draft, setDraft] = useState<AppEmployee>(employee);
     const [saving, setSaving] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -178,6 +201,23 @@ const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, onCancel, onS
         );
     };
 
+    const departmentOptions = useMemo(
+        () => withCurrentOption(fieldOptions.departments, draft.department),
+        [draft.department, fieldOptions.departments],
+    );
+    const positionOptions = useMemo(
+        () => withCurrentOption(fieldOptions.positions, draft.position),
+        [draft.position, fieldOptions.positions],
+    );
+    const roleOptions = useMemo(
+        () => withCurrentOption(fieldOptions.roles, draft.role),
+        [draft.role, fieldOptions.roles],
+    );
+    const statusOptions = useMemo(
+        () => withCurrentOption(fieldOptions.statuses, draft.status),
+        [draft.status, fieldOptions.statuses],
+    );
+
     return (
         <div className="modal-backdrop">
             <form className="modal-card" onSubmit={submit}>
@@ -220,11 +260,25 @@ const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, onCancel, onS
                     </div>
                     <div>
                         <label>ตำแหน่ง</label>
-                        <input value={draft.position} onChange={(event) => update('position', event.target.value)} />
+                        <select
+                            value={draft.position}
+                            onChange={(event) => update('position', event.target.value)}
+                        >
+                            {positionOptions.map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label>แผนก</label>
-                        <input value={draft.department} onChange={(event) => update('department', event.target.value)} />
+                        <select
+                            value={draft.department}
+                            onChange={(event) => update('department', event.target.value)}
+                        >
+                            {departmentOptions.map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label>บทบาท</label>
@@ -232,8 +286,9 @@ const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, onCancel, onS
                             value={draft.role}
                             onChange={(event) => update('role', event.target.value as AppEmployee['role'])}
                         >
-                            <option value="Employee">Employee</option>
-                            <option value="Supervisor">Supervisor</option>
+                            {roleOptions.map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                            ))}
                         </select>
                     </div>
                     <div>
@@ -242,9 +297,9 @@ const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, onCancel, onS
                             value={draft.status}
                             onChange={(event) => update('status', event.target.value as AppEmployee['status'])}
                         >
-                            <option value="Active">Active</option>
-                            <option value="OnLeave">OnLeave</option>
-                            <option value="Resigned">Resigned</option>
+                            {statusOptions.map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                            ))}
                         </select>
                     </div>
                     <div>
@@ -427,6 +482,7 @@ const EmployeeViewer: React.FC<EmployeeViewerProps> = ({ employee, onClose }) =>
 
 export const AppEmployees: React.FC = () => {
     const { employees, saveEmployee, saveEmployees, deleteEmployee } = useAppEmployees();
+    const { config } = useAppSettings();
 
     const [query, setQuery] = useState('');
     const [editorState, setEditorState] = useState<AppEmployee | null>(null);
@@ -434,6 +490,37 @@ export const AppEmployees: React.FC = () => {
     const [bulkCreateRange, setBulkCreateRange] = useState('');
     const [bulkCreateNotice, setBulkCreateNotice] = useState('');
     const [bulkCreating, setBulkCreating] = useState(false);
+
+    const employeeFieldOptions = useMemo<EmployeeFieldOptions>(() => {
+        const normalize = (values: string[], fallback: string[]) => {
+            const seen = new Set<string>();
+            const result = values
+                .map((value) => value.trim())
+                .filter((value) => {
+                    if (!value) {
+                        return false;
+                    }
+                    const key = value.toLowerCase();
+                    if (seen.has(key)) {
+                        return false;
+                    }
+                    seen.add(key);
+                    return true;
+                });
+
+            return result.length > 0 ? result : [...fallback];
+        };
+
+        return {
+            departments: normalize(config.employeeFieldOptions.departments, ['HR', 'Operations']),
+            positions: normalize(config.employeeFieldOptions.positions, ['Staff', 'Supervisor']),
+            roles: normalize(config.employeeFieldOptions.roles, ['Employee', 'Supervisor']),
+            statuses: normalize(config.employeeFieldOptions.statuses, ['Active', 'OnLeave', 'Resigned']),
+        };
+    }, [config.employeeFieldOptions]);
+
+    const defaultRole = (employeeFieldOptions.roles[0] || 'Employee') as AppEmployee['role'];
+    const defaultStatus = (employeeFieldOptions.statuses[0] || 'Active') as AppEmployee['status'];
 
     const filtered = useMemo(() => {
         const normalized = query.trim().toLowerCase();
@@ -485,7 +572,7 @@ export const AppEmployees: React.FC = () => {
         setBulkCreating(true);
         setBulkCreateNotice('');
         try {
-            const items = rangeResult.ids.map((id) => createNewEmployee(id));
+            const items = rangeResult.ids.map((id) => createNewEmployee(id, defaultRole, defaultStatus));
             await saveEmployees(items);
             setBulkCreateNotice(`สร้างพนักงาน ${items.length} คนเรียบร้อย (PIN อัตโนมัติ 111111)`);
             setBulkCreateRange('');
@@ -506,7 +593,7 @@ export const AppEmployees: React.FC = () => {
                         <button
                             type="button"
                             className="btn-primary"
-                            onClick={() => setEditorState(createNewEmployee(getNextEmployeeId(employees)))}
+                            onClick={() => setEditorState(createNewEmployee(getNextEmployeeId(employees), defaultRole, defaultStatus))}
                         >
                             เพิ่มพนักงาน
                         </button>
@@ -613,6 +700,7 @@ export const AppEmployees: React.FC = () => {
             {editorState ? (
                 <EmployeeEditor
                     employee={editorState}
+                    fieldOptions={employeeFieldOptions}
                     onCancel={() => setEditorState(null)}
                     onSubmit={async (employee) => {
                         await saveEmployee(employee);

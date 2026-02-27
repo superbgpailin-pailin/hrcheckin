@@ -40,6 +40,13 @@ export interface ControlShiftPolicy {
     overrides: Record<string, string>;
 }
 
+export interface EmployeeFieldOptions {
+    departments: string[];
+    positions: string[];
+    roles: string[];
+    statuses: string[];
+}
+
 export interface AppSystemConfig {
     companyName: string;
     qrSecret: string;
@@ -49,6 +56,7 @@ export interface AppSystemConfig {
     lateRules: LatePenaltyRule[];
     shifts: ShiftDefinition[];
     controlShiftPolicy: ControlShiftPolicy;
+    employeeFieldOptions: EmployeeFieldOptions;
 }
 
 export interface AppEmployee {

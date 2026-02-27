@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
-import { DEFAULT_CONFIG, DEFAULT_LATE_RULES } from '../data/appDefaults';
+import { DEFAULT_CONFIG, DEFAULT_EMPLOYEE_FIELD_OPTIONS, DEFAULT_LATE_RULES } from '../data/appDefaults';
 import type { AppSystemConfig } from '../types/app';
 
 const tableName = 'settings';
@@ -36,6 +36,50 @@ const cloneDefaultShifts = (): AppSystemConfig['shifts'] => {
 
 const cloneDefaultLateRules = (): AppSystemConfig['lateRules'] => {
     return DEFAULT_LATE_RULES.map((rule) => ({ ...rule }));
+};
+
+const cloneDefaultEmployeeFieldOptions = (): AppSystemConfig['employeeFieldOptions'] => {
+    return {
+        departments: [...DEFAULT_EMPLOYEE_FIELD_OPTIONS.departments],
+        positions: [...DEFAULT_EMPLOYEE_FIELD_OPTIONS.positions],
+        roles: [...DEFAULT_EMPLOYEE_FIELD_OPTIONS.roles],
+        statuses: [...DEFAULT_EMPLOYEE_FIELD_OPTIONS.statuses],
+    };
+};
+
+const normalizeOptionValues = (values: unknown, fallback: string[]): string[] => {
+    if (!Array.isArray(values)) {
+        return [...fallback];
+    }
+
+    const seen = new Set<string>();
+    const normalized = values
+        .map((value) => String(value || '').trim())
+        .filter((value) => {
+            if (!value) {
+                return false;
+            }
+            const key = value.toLowerCase();
+            if (seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+
+    return normalized.length > 0 ? normalized : [...fallback];
+};
+
+const normalizeEmployeeFieldOptions = (
+    options?: Partial<AppSystemConfig['employeeFieldOptions']>,
+): AppSystemConfig['employeeFieldOptions'] => {
+    const defaults = cloneDefaultEmployeeFieldOptions();
+    return {
+        departments: normalizeOptionValues(options?.departments, defaults.departments),
+        positions: normalizeOptionValues(options?.positions, defaults.positions),
+        roles: normalizeOptionValues(options?.roles, defaults.roles),
+        statuses: normalizeOptionValues(options?.statuses, defaults.statuses),
+    };
 };
 
 const normalizeLateRules = (rules?: AppSystemConfig['lateRules']): AppSystemConfig['lateRules'] => {
@@ -76,6 +120,7 @@ const mergeConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
                 ...DEFAULT_CONFIG.controlShiftPolicy,
                 overrides: { ...DEFAULT_CONFIG.controlShiftPolicy.overrides },
             },
+            employeeFieldOptions: cloneDefaultEmployeeFieldOptions(),
         };
     }
 
@@ -94,6 +139,7 @@ const mergeConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
         shifts: input.shifts?.length
             ? input.shifts.map((shift) => ({ ...shift }))
             : cloneDefaultShifts(),
+        employeeFieldOptions: normalizeEmployeeFieldOptions(input.employeeFieldOptions),
     };
 };
 
