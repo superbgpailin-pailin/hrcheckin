@@ -40,8 +40,45 @@ const legacyOptionalColumns = [
 
 const sanitizePin = (value: string): string => value.replace(/\D/g, '').slice(0, 6);
 
+const normalizeEmployeeRole = (value: string | null | undefined): AppEmployee['role'] => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (
+        normalized === 'supervisor'
+        || normalized === 'head'
+        || normalized === 'manager'
+        || normalized === 'หัวหน้า'
+        || normalized === 'หัวหน้างาน'
+    ) {
+        return 'Supervisor';
+    }
+    return 'Employee';
+};
+
+const normalizeEmployeeStatus = (value: string | null | undefined): AppEmployee['status'] => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (
+        normalized === 'onleave'
+        || normalized === 'on leave'
+        || normalized === 'leave'
+        || normalized === 'ลา'
+        || normalized === 'ลางาน'
+        || normalized === 'ลาพัก'
+    ) {
+        return 'OnLeave';
+    }
+    if (
+        normalized === 'resigned'
+        || normalized === 'ลาออก'
+        || normalized === 'พ้นสภาพ'
+        || normalized === 'ยกเลิก'
+    ) {
+        return 'Resigned';
+    }
+    return 'Active';
+};
+
 const toAppEmployee = (row: EmployeeRow): AppEmployee => {
-    const role = (row.role || 'Employee') as AppEmployee['role'];
+    const role = normalizeEmployeeRole(row.role);
     const fallbackPhoto = `https://ui-avatars.com/api/?name=${encodeURIComponent(row.id)}&background=334155&color=fff`;
 
     return {
@@ -54,7 +91,7 @@ const toAppEmployee = (row: EmployeeRow): AppEmployee => {
         nickname: row.nickname || row.first_name_en || row.id,
         position: row.position || '-',
         department: row.department || '-',
-        status: (row.status || 'Active') as AppEmployee['status'],
+        status: normalizeEmployeeStatus(row.status),
         photoUrl: row.photo_url || fallbackPhoto,
         pin: row.pin || '123456',
         email: row.email || '',
@@ -72,8 +109,8 @@ const toAppEmployee = (row: EmployeeRow): AppEmployee => {
 
 const toPayload = (employee: AppEmployee): Record<string, string> => {
     return {
-        id: employee.id,
-        role: employee.role,
+        id: employee.id.trim().toUpperCase(),
+        role: normalizeEmployeeRole(employee.role),
         photo_url: employee.photoUrl,
         first_name_th: employee.firstNameTH,
         last_name_th: employee.lastNameTH,
@@ -82,7 +119,7 @@ const toPayload = (employee: AppEmployee): Record<string, string> => {
         nickname: employee.nickname,
         position: employee.position,
         department: employee.department,
-        status: employee.status,
+        status: normalizeEmployeeStatus(employee.status),
         pin: employee.pin,
         email: employee.email,
         phone_number: employee.phoneNumber,
