@@ -27,6 +27,8 @@ interface EmployeeRow {
     default_shift_id: string | null;
 }
 
+type EmployeePayload = Record<string, string | null>;
+
 const tableName = 'employees';
 const legacyOptionalColumns = [
     'default_shift_id',
@@ -39,6 +41,16 @@ const legacyOptionalColumns = [
 ];
 
 const sanitizePin = (value: string): string => value.replace(/\D/g, '').slice(0, 6);
+
+const normalizeDateOrNull = (value: string | null | undefined): string | null => {
+    const normalized = String(value || '').trim();
+    return normalized || null;
+};
+
+const normalizeDateOrToday = (value: string | null | undefined): string => {
+    const normalized = String(value || '').trim();
+    return normalized || new Date().toISOString().slice(0, 10);
+};
 
 const normalizeEmployeeRole = (value: string | null | undefined): AppEmployee['role'] => {
     const normalized = String(value || '').trim().toLowerCase();
@@ -107,7 +119,7 @@ const toAppEmployee = (row: EmployeeRow): AppEmployee => {
     };
 };
 
-const toPayload = (employee: AppEmployee): Record<string, string> => {
+const toPayload = (employee: AppEmployee): EmployeePayload => {
     return {
         id: employee.id.trim().toUpperCase(),
         role: normalizeEmployeeRole(employee.role),
@@ -123,18 +135,18 @@ const toPayload = (employee: AppEmployee): Record<string, string> => {
         pin: employee.pin,
         email: employee.email,
         phone_number: employee.phoneNumber,
-        birth_date: employee.birthDate,
+        birth_date: normalizeDateOrNull(employee.birthDate),
         emergency_contact_name: employee.emergencyContactName,
         emergency_contact_phone: employee.emergencyContactPhone,
         selfie_url: employee.selfieUrl,
         id_card_url: employee.idCardUrl,
         passport_url: employee.passportUrl,
-        start_date: employee.startDate,
-        default_shift_id: employee.defaultShiftId || '',
+        start_date: normalizeDateOrToday(employee.startDate),
+        default_shift_id: employee.defaultShiftId || null,
     };
 };
 
-const withoutKey = (source: Record<string, string>, key: string): Record<string, string> => {
+const withoutKey = (source: EmployeePayload, key: string): EmployeePayload => {
     const { [key]: ignored, ...rest } = source;
     void ignored;
     return rest;
@@ -146,9 +158,9 @@ const extractMissingColumn = (message: string): string | null => {
 };
 
 const removeColumnsByMessage = (
-    source: Record<string, string>,
+    source: EmployeePayload,
     message: string,
-): { nextPayload: Record<string, string>; removedAny: boolean } => {
+): { nextPayload: EmployeePayload; removedAny: boolean } => {
     let nextPayload = { ...source };
     let removedAny = false;
     const normalizedMessage = message.toLowerCase();
@@ -169,7 +181,7 @@ const removeColumnsByMessage = (
     return { nextPayload, removedAny };
 };
 
-const retryUpsertWithLegacyPayload = async (payload: Record<string, string>, message: string): Promise<void> => {
+const retryUpsertWithLegacyPayload = async (payload: EmployeePayload, message: string): Promise<void> => {
     let fallbackPayload = { ...payload };
     let lastMessage = message;
 

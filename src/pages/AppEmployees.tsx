@@ -466,7 +466,8 @@ export const AppEmployees: React.FC = () => {
     const [query, setQuery] = useState('');
     const [editorState, setEditorState] = useState<AppEmployee | null>(null);
     const [viewerState, setViewerState] = useState<AppEmployee | null>(null);
-    const [bulkCreateRange, setBulkCreateRange] = useState('');
+    const [bulkCreateStart, setBulkCreateStart] = useState('');
+    const [bulkCreateEnd, setBulkCreateEnd] = useState('');
     const [bulkCreateNotice, setBulkCreateNotice] = useState('');
     const [bulkCreating, setBulkCreating] = useState(false);
 
@@ -530,7 +531,7 @@ export const AppEmployees: React.FC = () => {
     };
 
     const createEmployeesInBulk = async () => {
-        const rangeResult = getEmployeeIdsFromRange(bulkCreateRange);
+        const rangeResult = getEmployeeIdsFromRange(`${bulkCreateStart}-${bulkCreateEnd}`);
         if (!rangeResult.ids) {
             setBulkCreateNotice(rangeResult.error);
             return;
@@ -551,7 +552,8 @@ export const AppEmployees: React.FC = () => {
             const items = rangeResult.ids.map((id) => createNewEmployee(id, defaultStatus));
             await saveEmployees(items);
             setBulkCreateNotice(`สร้างพนักงาน ${items.length} คนเรียบร้อย (PIN อัตโนมัติ 111111)`);
-            setBulkCreateRange('');
+            setBulkCreateStart('');
+            setBulkCreateEnd('');
         } catch (error) {
             setBulkCreateNotice(error instanceof Error ? error.message : 'สร้างพนักงานไม่สำเร็จ');
         } finally {
@@ -587,12 +589,25 @@ export const AppEmployees: React.FC = () => {
                     </div>
                     <div>
                         <label>สร้างหลายคนด้วยช่วงรหัส (PIN 111111)</label>
-                        <input
-                            value={bulkCreateRange}
-                            onChange={(event) => setBulkCreateRange(event.target.value.toUpperCase())}
-                            placeholder="CR001-CR020"
-                        />
-                        <div className="panel-muted">รูปแบบ: รหัสเริ่ม-รหัสสิ้นสุด เช่น CR001-CR020</div>
+                        <div className="inline-actions" style={{ gap: '0.6rem', flexWrap: 'wrap' }}>
+                            <div style={{ minWidth: '160px', flex: '1 1 160px' }}>
+                                <label>เริ่ม</label>
+                                <input
+                                    value={bulkCreateStart}
+                                    onChange={(event) => setBulkCreateStart(event.target.value.toUpperCase())}
+                                    placeholder="CR003"
+                                />
+                            </div>
+                            <div style={{ minWidth: '160px', flex: '1 1 160px' }}>
+                                <label>ถึง</label>
+                                <input
+                                    value={bulkCreateEnd}
+                                    onChange={(event) => setBulkCreateEnd(event.target.value.toUpperCase())}
+                                    placeholder="CR010"
+                                />
+                            </div>
+                        </div>
+                        <div className="panel-muted">รูปแบบ: เริ่ม CR003 ถึง CR010</div>
                     </div>
                 </div>
 
