@@ -7,6 +7,7 @@ export const AppAdmins: React.FC = () => {
     const [displayName, setDisplayName] = useState('');
     const [password, setPassword] = useState('');
     const [notice, setNotice] = useState('');
+    const [submitting, setSubmitting] = useState(false);
 
     const canManage = portalUser?.role === 'Master';
 
@@ -19,9 +20,11 @@ export const AppAdmins: React.FC = () => {
         });
     }, [portalAdmins]);
 
-    const submit = (event: React.FormEvent) => {
+    const submit = async (event: React.FormEvent) => {
         event.preventDefault();
-        const result = addPortalAdmin({ username, displayName, password });
+        setSubmitting(true);
+        const result = await addPortalAdmin({ username, displayName, password });
+        setSubmitting(false);
         setNotice(result.message || '');
         if (!result.success) {
             return;
@@ -41,7 +44,7 @@ export const AppAdmins: React.FC = () => {
                 </div>
 
                 {canManage ? (
-                    <form onSubmit={submit} className="filter-grid">
+                    <form onSubmit={(event) => void submit(event)} className="filter-grid">
                         <div>
                             <label>Username</label>
                             <input
@@ -69,7 +72,9 @@ export const AppAdmins: React.FC = () => {
                         </div>
 
                         <div className="inline-actions" style={{ gridColumn: '1 / -1', justifyContent: 'flex-end' }}>
-                            <button type="submit" className="btn-primary">เพิ่มแอดมิน</button>
+                            <button type="submit" className="btn-primary" disabled={submitting}>
+                                {submitting ? 'กำลังเพิ่ม...' : 'เพิ่มแอดมิน'}
+                            </button>
                         </div>
                     </form>
                 ) : (

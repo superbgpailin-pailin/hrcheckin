@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
 import type { PortalUser } from '../types/app';
 
 interface LoginResult {
@@ -23,7 +24,7 @@ interface PortalAuthContextValue {
     portalAdmins: PortalUser[];
     loginPortal: (username: string, password: string) => LoginResult;
     logoutPortal: () => void;
-    addPortalAdmin: (input: AddPortalAdminInput) => AddPortalAdminResult;
+    addPortalAdmin: (input: AddPortalAdminInput) => Promise<AddPortalAdminResult>;
 }
 
 interface PortalAccount extends PortalUser {
@@ -31,8 +32,20 @@ interface PortalAccount extends PortalUser {
     active: boolean;
 }
 
+interface PortalAccountRow {
+    username: string;
+    display_name: string | null;
+    role: string | null;
+    photo_url: string | null;
+    password: string | null;
+    active: boolean | null;
+}
+
 const STORAGE_KEY_CURRENT_USER = 'hrcheckin_portal_user_v3';
 const STORAGE_KEY_ACCOUNTS = 'hrcheckin_portal_accounts_v3';
+const ACCOUNTS_TABLE = 'portal_admin_accounts';
+
+let accountsTableUnavailable = false;
 
 const MASTER_ACCOUNT: PortalAccount = {
     username: 'master',
@@ -54,12 +67,19 @@ const toPortalUser = (account: PortalAccount): PortalUser => {
     };
 };
 
+const isSchemaMissingError = (message: string): boolean => {
+    const normalized = message.toLowerCase();
+    return normalized.includes('could not find the table')
+        || normalized.includes('schema cache')
+        || normalized.includes('does not exist');
+};
+
 const ensureMasterAccount = (accounts: PortalAccount[]): PortalAccount[] => {
     const withoutMaster = accounts.filter((account) => normalizeUsername(account.username) !== 'master');
     return [MASTER_ACCOUNT, ...withoutMaster];
 };
 
-const parseStoredAccounts = (): PortalAccount[] => {
+const readStoredAccounts = (): PortalAccount[] => {
     try {
         const raw = localStorage.getItem(STORAGE_KEY_ACCOUNTS);
         if (!raw) {
@@ -113,11 +133,125 @@ const persistAccounts = (accounts: PortalAccount[]): void => {
     localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(ensureMasterAccount(accounts)));
 };
 
+const fromRow = (row: PortalAccountRow): PortalAccount | null => {
+    const username = normalizeUsername(row.username);
+    const password = String(row.password || '');
+    if (!username || !password) {
+        return null;
+    }
+
+    const role = row.role === 'Master' ? 'Master' : 'Admin';
+    const displayName = String(row.display_name || username.toUpperCase());
+    const photoUrl = String(row.photo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=1e3a8a&color=fff`);
+
+    return {
+        username,
+        displayName,
+        role,
+        photoUrl,
+        password,
+        active: Boolean(row.active ?? true),
+    };
+};
+
+const toInsertRow = (account: PortalAccount): Record<string, string | boolean> => {
+    return {
+        username: normalizeUsername(account.username),
+        display_name: account.displayName,
+        role: account.role,
+        photo_url: account.photoUrl,
+        password: account.password,
+        active: account.active,
+    };
+};
+
+const dedupeAccounts = (accounts: PortalAccount[]): PortalAccount[] => {
+    const map = new Map<string, PortalAccount>();
+    accounts.forEach((account) => {
+        map.set(normalizeUsername(account.username), account);
+    });
+    return ensureMasterAccount(Array.from(map.values()));
+};
+
+const fetchRemoteAccounts = async (): Promise<PortalAccount[]> => {
+    const { data, error } = await supabase
+        .from(ACCOUNTS_TABLE)
+        .select('username, display_name, role, photo_url, password, active')
+        .order('username', { ascending: true });
+
+    if (error) {
+        throw error;
+    }
+
+    return ((data as PortalAccountRow[]) || [])
+        .map(fromRow)
+        .filter((item): item is PortalAccount => Boolean(item));
+};
+
+const insertRemoteAccount = async (account: PortalAccount): Promise<void> => {
+    const { error } = await supabase
+        .from(ACCOUNTS_TABLE)
+        .insert([toInsertRow(account)]);
+
+    if (error) {
+        throw error;
+    }
+};
+
 const PortalAuthContext = createContext<PortalAuthContextValue | undefined>(undefined);
 
 export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [accounts, setAccounts] = useState<PortalAccount[]>(() => parseStoredAccounts());
+    const [accounts, setAccounts] = useState<PortalAccount[]>(() => readStoredAccounts());
     const [portalUsername, setPortalUsername] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_CURRENT_USER));
+
+    const reloadAccounts = useCallback(async (): Promise<void> => {
+        if (accountsTableUnavailable) {
+            const localAccounts = dedupeAccounts(readStoredAccounts());
+            setAccounts(localAccounts);
+            persistAccounts(localAccounts);
+            return;
+        }
+
+        const localAccounts = dedupeAccounts(readStoredAccounts());
+
+        try {
+            let remoteAccounts = dedupeAccounts(await fetchRemoteAccounts());
+
+            const remoteUsernames = new Set(remoteAccounts.map((account) => normalizeUsername(account.username)));
+            const missingFromRemote = localAccounts.filter((account) => {
+                const normalized = normalizeUsername(account.username);
+                return normalized !== 'master' && !remoteUsernames.has(normalized);
+            });
+
+            if (missingFromRemote.length > 0) {
+                for (const account of missingFromRemote) {
+                    try {
+                        await insertRemoteAccount(account);
+                    } catch {
+                        // Keep loading flow resilient; duplicate/errors are handled by next fetch.
+                    }
+                }
+                remoteAccounts = dedupeAccounts(await fetchRemoteAccounts());
+            }
+
+            const merged = dedupeAccounts([...remoteAccounts, ...localAccounts]);
+            setAccounts(merged);
+            persistAccounts(merged);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error || '');
+            if (isSchemaMissingError(message)) {
+                accountsTableUnavailable = true;
+            }
+
+            const fallback = dedupeAccounts(localAccounts);
+            setAccounts(fallback);
+            persistAccounts(fallback);
+        }
+    }, []);
+
+    useEffect(() => {
+        void reloadAccounts();
+    }, [reloadAccounts]);
 
     const portalUser = useMemo<PortalUser | null>(() => {
         if (!portalUsername) {
@@ -164,7 +298,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         localStorage.removeItem(STORAGE_KEY_CURRENT_USER);
     }, []);
 
-    const addPortalAdmin = useCallback((input: AddPortalAdminInput): AddPortalAdminResult => {
+    const addPortalAdmin = useCallback(async (input: AddPortalAdminInput): Promise<AddPortalAdminResult> => {
         if (!portalUser || portalUser.role !== 'Master') {
             return { success: false, message: 'เฉพาะ Master เท่านั้นที่เพิ่มแอดมินได้' };
         }
@@ -195,14 +329,27 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             active: true,
         };
 
-        setAccounts((prev) => {
-            const next = ensureMasterAccount([...prev, newAccount]);
-            persistAccounts(next);
-            return next;
-        });
+        if (!accountsTableUnavailable) {
+            try {
+                await insertRemoteAccount(newAccount);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error || '');
+                if (isSchemaMissingError(message)) {
+                    accountsTableUnavailable = true;
+                } else if (message.toLowerCase().includes('duplicate key')) {
+                    return { success: false, message: 'Username นี้ถูกใช้งานแล้ว' };
+                } else {
+                    return { success: false, message };
+                }
+            }
+        }
 
+        const next = dedupeAccounts([...accounts, newAccount]);
+        setAccounts(next);
+        persistAccounts(next);
+        await reloadAccounts();
         return { success: true, message: 'เพิ่มแอดมินเรียบร้อยแล้ว' };
-    }, [accounts, portalUser]);
+    }, [accounts, portalUser, reloadAccounts]);
 
     const value = useMemo<PortalAuthContextValue>(() => {
         return {
