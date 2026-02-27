@@ -1,142 +1,217 @@
-import { useState } from 'react';
-import { LanguageProvider } from './context/LanguageContext';
-import { ThemeProvider } from './context/ThemeContext';
-import { SiteProvider } from './context/SiteContext';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { SettingsProvider } from './context/SettingsContext';
-import { EmployeeProvider } from './context/EmployeeContext';
-import { HolidayProvider } from './context/HolidayContext';
-import { LeaveProvider } from './context/LeaveContext';
-import { Layout } from './components/Layout';
-import { Dashboard } from './pages/Dashboard';
-import { LeaveRequest } from './pages/LeaveRequest';
-import { Employees } from './pages/Employees';
-import { SiteManagement } from './pages/SiteManagement';
-import { Settings } from './pages/Settings';
-import { LandingPage } from './pages/LandingPage';
-import { AdminLogin } from './pages/AdminLogin';
-import { AdminAttendance } from './pages/AdminAttendance';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AppEmployeeProvider } from './context/AppEmployeeContext';
+import { AppLanguageProvider } from './context/AppLanguageContext';
+import { AppSettingsProvider } from './context/AppSettingsContext';
+import { PortalAuthProvider, usePortalAuth } from './context/PortalAuthContext';
+import { AppShell } from './components/AppShell';
+import type { PortalPage } from './types/app';
+import { AppLanding } from './pages/AppLanding';
+import { AppCheckIn } from './pages/AppCheckIn';
+import { AppSelfProfile } from './pages/AppSelfProfile';
+import { AdminLoginPage } from './pages/AdminLoginPage';
+import { AppDashboard } from './pages/AppDashboard';
+import { AppAttendance } from './pages/AppAttendance';
+import { AppEmployees } from './pages/AppEmployees';
+import { AppProfileRequests } from './pages/AppProfileRequests';
+import { AppSettings } from './pages/AppSettings';
+import { AppKiosk } from './pages/AppKiosk';
+import { AppAdmins } from './pages/AppAdmins';
+import {
+    buildAdminLoginHash,
+    buildCheckInHash,
+    buildEmployeeProfileHash,
+    buildKioskHash,
+    buildLandingHash,
+    buildPortalHash,
+    parseHashRoute,
+    type AppRouteState,
+    type LoginNext,
+} from './utils/routes';
 
-import { EmployeeLayout } from './components/EmployeeLayout';
-import { CheckInFlow } from './pages/CheckInFlow';
-import { ProfileFlow } from './pages/ProfileFlow';
-import { HistoryFlow } from './pages/HistoryFlow';
-import { HolidayAdmin } from './pages/HolidayAdmin';
-import { HolidaySelection } from './pages/HolidaySelection';
-import { MonthlySummary } from './pages/MonthlySummary';
-import { HistoryAndHoliday } from './pages/HistoryAndHoliday';
-import { EmployeeLeaveRequest } from './pages/EmployeeLeaveRequest';
+const hashForRoute = (route: AppRouteState): string => {
+    if (route.view === 'landing') {
+        return buildLandingHash();
+    }
+    if (route.view === 'checkin') {
+        return buildCheckInHash();
+    }
+    if (route.view === 'kiosk') {
+        return buildKioskHash();
+    }
+    if (route.view === 'employee-profile') {
+        return buildEmployeeProfileHash();
+    }
+    if (route.view === 'admin-login') {
+        return buildAdminLoginHash(route.loginNext);
+    }
+    return buildPortalHash(route.portalPage);
+};
 
-// Placeholder (Fallback)
-const Placeholder = ({ title }: { title: string }) => (
-  <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
-    <h2>{title}</h2>
-    <p>Page Not Found or Under Construction</p>
-  </div>
-);
+const AppContent: React.FC = () => {
+    const { portalUser, loginPortal, logoutPortal } = usePortalAuth();
+    const [route, setRoute] = useState<AppRouteState>(() => parseHashRoute(window.location.hash));
 
-const AppContent = () => {
-  // Default to Landing Page
-  const [currentPage, setCurrentPage] = useState('landing');
-  const { currentUser } = useAuth();
+    useEffect(() => {
+        const onHashChange = () => {
+            setRoute(parseHashRoute(window.location.hash));
+        };
 
-  // Pages that don't need the Sidebar Layout
-  if (currentPage === 'landing') {
-    return <LandingPage onNavigate={setCurrentPage} />;
-  }
+        window.addEventListener('hashchange', onHashChange);
+        return () => {
+            window.removeEventListener('hashchange', onHashChange);
+        };
+    }, []);
 
-  if (currentPage === 'admin-login') {
-    return <AdminLogin onNavigate={setCurrentPage} />;
-  }
+    const navigate = useCallback((next: AppRouteState) => {
+        const targetHash = hashForRoute(next);
+        if (window.location.hash !== targetHash) {
+            window.location.hash = targetHash;
+        }
+        setRoute(next);
+    }, []);
 
-  // Employee Pages (Standalone Layout)
-  // Holiday Selection (Standalone)  
-  if (currentPage === 'holidaySelection') {
-    return <HolidaySelection />;
-  }
+    const openLanding = useCallback(() => {
+        navigate({ view: 'landing', portalPage: 'dashboard', loginNext: 'dashboard' });
+    }, [navigate]);
 
-  // Combined History and Holiday page
-  if (currentPage === 'historyHoliday') {
-    return <HistoryAndHoliday onBack={() => setCurrentPage('landing')} />;
-  }
+    const openCheckIn = useCallback(() => {
+        navigate({ view: 'checkin', portalPage: 'dashboard', loginNext: 'dashboard' });
+    }, [navigate]);
 
-  // Employee Leave Request page
-  if (currentPage === 'employeeLeave') {
-    return <EmployeeLeaveRequest onBack={() => setCurrentPage('landing')} />;
-  }
+    const openKioskPage = useCallback(() => {
+        navigate({ view: 'kiosk', portalPage: 'dashboard', loginNext: 'kiosk' });
+    }, [navigate]);
 
-  if (['timeAttendance', 'myProfile', 'history'].includes(currentPage)) {
-    // Map page ID to title key
-    const titleMap: Record<string, string> = {
-      timeAttendance: 'checkIn',
-      myProfile: 'profile',
-      history: 'history'
-    };
+    const openSelfProfile = useCallback(() => {
+        navigate({ view: 'employee-profile', portalPage: 'dashboard', loginNext: 'dashboard' });
+    }, [navigate]);
+
+    const openAdminLogin = useCallback((next: LoginNext = 'dashboard') => {
+        navigate({
+            view: 'admin-login',
+            portalPage: next === 'kiosk' ? 'dashboard' : next,
+            loginNext: next,
+        });
+    }, [navigate]);
+
+    const openKiosk = useCallback(() => {
+        openAdminLogin('kiosk');
+    }, [openAdminLogin]);
+
+    const openPortal = useCallback((page: PortalPage = 'dashboard') => {
+        navigate({ view: 'portal', portalPage: page, loginNext: page });
+    }, [navigate]);
+
+    if (route.view === 'landing') {
+        return (
+            <AppLanding
+                checkInHref={buildCheckInHash()}
+                selfProfileHref={buildEmployeeProfileHash()}
+                kioskHref={buildAdminLoginHash('kiosk')}
+                adminPortalHref={buildAdminLoginHash('dashboard')}
+                onOpenCheckIn={openCheckIn}
+                onOpenSelfProfile={openSelfProfile}
+                onOpenKiosk={openKiosk}
+                onOpenAdminLogin={() => openAdminLogin('dashboard')}
+            />
+        );
+    }
+
+    if (route.view === 'checkin') {
+        return <AppCheckIn onBack={openLanding} />;
+    }
+
+    if (route.view === 'employee-profile') {
+        return <AppSelfProfile onBack={openLanding} />;
+    }
+
+    if (route.view === 'kiosk') {
+        if (!portalUser) {
+            return (
+                <AdminLoginPage
+                    onBack={openLanding}
+                    onLogin={(username, password) => {
+                        const result = loginPortal(username, password);
+                        if (result.success) {
+                            openKioskPage();
+                        }
+                        return result;
+                    }}
+                />
+            );
+        }
+
+        return <AppKiosk onBack={openLanding} />;
+    }
+
+    if (route.view === 'admin-login') {
+        return (
+            <AdminLoginPage
+                onBack={openLanding}
+                onLogin={(username, password) => {
+                    const result = loginPortal(username, password);
+                    if (result.success) {
+                        if (route.loginNext === 'kiosk') {
+                            openKioskPage();
+                        } else {
+                            openPortal(route.loginNext);
+                        }
+                    }
+                    return result;
+                }}
+            />
+        );
+    }
+
+    if (!portalUser) {
+        return (
+            <AdminLoginPage
+                onBack={openLanding}
+                onLogin={(username, password) => {
+                    const result = loginPortal(username, password);
+                    if (result.success) {
+                        openPortal(route.portalPage);
+                    }
+                    return result;
+                }}
+            />
+        );
+    }
+
+    const portalPage = route.portalPage;
 
     return (
-      <EmployeeLayout onNavigate={setCurrentPage} titleKey={titleMap[currentPage]}>
-        {currentPage === 'timeAttendance' && <CheckInFlow onBack={() => setCurrentPage('landing')} />}
-        {currentPage === 'myProfile' && <ProfileFlow />}
-        {currentPage === 'history' && <HistoryFlow />}
-      </EmployeeLayout>
+        <AppShell
+            user={portalUser}
+            page={portalPage}
+            onNavigate={openPortal}
+            onLogout={() => {
+                logoutPortal();
+                openLanding();
+            }}
+        >
+            {portalPage === 'dashboard' ? <AppDashboard /> : null}
+            {portalPage === 'attendance' ? <AppAttendance /> : null}
+            {portalPage === 'employees' ? <AppEmployees /> : null}
+            {portalPage === 'requests' ? <AppProfileRequests /> : null}
+            {portalPage === 'settings' ? <AppSettings /> : null}
+            {portalPage === 'admins' ? <AppAdmins /> : null}
+        </AppShell>
     );
-  }
-
-  // Admin Pages (Dashboard Layout)
-  const renderAdminPage = () => {
-    // Basic Gatekeeper
-    if (!currentUser || currentUser.role !== 'Admin') {
-      return (
-        <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>
-          <h2>⛔ Access Denied</h2>
-          <p>Only Administrators can access the backend.</p>
-          <button onClick={() => setCurrentPage('landing')} style={{ marginTop: '1rem', padding: '0.5rem 1rem' }}>
-            Back to Home
-          </button>
-        </div>
-      );
-    }
-
-    switch (currentPage) {
-      case 'dashboard': return <Dashboard />;
-      case 'adminAttendance': return <AdminAttendance />;
-      case 'employees': return <Employees />;
-      case 'leaveRequest': return <LeaveRequest />; // Admin likely wants to see requests here too?
-      case 'siteManagement': return <SiteManagement />;
-      case 'settings': return <Settings />;
-      case 'holidayAdmin': return <HolidayAdmin />;
-      case 'monthlySummary': return <MonthlySummary />;
-      default: return <Placeholder title="Page Not Found" />;
-    }
-  };
-
-  return (
-    <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {renderAdminPage()}
-    </Layout>
-  );
 };
 
 function App() {
-  return (
-    <ThemeProvider>
-      <LanguageProvider>
-        <SiteProvider>
-          <SettingsProvider>
-            <EmployeeProvider>
-              <HolidayProvider>
-                <LeaveProvider>
-                  <AuthProvider>
-                    <AppContent />
-                  </AuthProvider>
-                </LeaveProvider>
-              </HolidayProvider>
-            </EmployeeProvider>
-          </SettingsProvider>
-        </SiteProvider>
-      </LanguageProvider>
-    </ThemeProvider>
-  );
+    return (
+        <AppLanguageProvider>
+            <AppSettingsProvider>
+                <AppEmployeeProvider>
+                    <PortalAuthProvider>
+                        <AppContent />
+                    </PortalAuthProvider>
+                </AppEmployeeProvider>
+            </AppSettingsProvider>
+        </AppLanguageProvider>
+    );
 }
 
 export default App;

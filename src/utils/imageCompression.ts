@@ -1,4 +1,3 @@
-
 import imageCompression from 'browser-image-compression';
 
 export interface CompressionOptions {
@@ -8,28 +7,15 @@ export interface CompressionOptions {
     initialQuality?: number;
 }
 
-/**
- * Compresses an image file for efficient storage.
- * Default settings target ~50KB-100KB for typical phone photos.
- */
 export const compressImage = async (file: File, options?: CompressionOptions): Promise<File> => {
     const defaultOptions = {
-        maxSizeMB: 0.1, // Target 100KB
-        maxWidthOrHeight: 800, // Sufficient for verifying identity/location
+        maxSizeMB: 0.18,
+        maxWidthOrHeight: 1280,
         useWebWorker: true,
-        initialQuality: 0.7,
-        fileType: 'image/webp', // Use WebP for better compression if possible
+        initialQuality: 0.72,
+        fileType: 'image/webp',
     };
 
     const finalOptions = { ...defaultOptions, ...options };
-
-    try {
-        const compressedFile = await imageCompression(file, finalOptions);
-        console.log(`Original size: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
-        console.log(`Compressed size: ${(compressedFile.size / 1024 / 1024).toFixed(2)} MB`);
-        return compressedFile;
-    } catch (error) {
-        console.error('Image compression failed:', error);
-        throw error; // Re-throw to handle in UI
-    }
+    return imageCompression(file, finalOptions);
 };

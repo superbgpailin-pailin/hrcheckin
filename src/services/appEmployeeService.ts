@@ -1,0 +1,287 @@
+import { supabase } from '../lib/supabaseClient';
+import { FALLBACK_EMPLOYEES } from '../data/appDefaults';
+import type { AppEmployee } from '../types/app';
+
+interface EmployeeRow {
+    id: string;
+    role: string | null;
+    photo_url: string | null;
+    first_name_th: string | null;
+    last_name_th: string | null;
+    first_name_en: string | null;
+    last_name_en: string | null;
+    nickname: string | null;
+    position: string | null;
+    department: string | null;
+    status: AppEmployee['status'] | null;
+    pin: string | null;
+    email: string | null;
+    phone_number: string | null;
+    birth_date: string | null;
+    emergency_contact_name: string | null;
+    emergency_contact_phone: string | null;
+    selfie_url: string | null;
+    id_card_url: string | null;
+    passport_url: string | null;
+    start_date: string | null;
+    default_shift_id: string | null;
+}
+
+const tableName = 'employees';
+const legacyOptionalColumns = [
+    'default_shift_id',
+    'birth_date',
+    'emergency_contact_name',
+    'emergency_contact_phone',
+    'selfie_url',
+    'id_card_url',
+    'passport_url',
+];
+
+const sanitizePin = (value: string): string => value.replace(/\D/g, '').slice(0, 6);
+
+const toAppEmployee = (row: EmployeeRow): AppEmployee => {
+    const role: AppEmployee['role'] = row.role === 'Supervisor' ? 'Supervisor' : 'Employee';
+    const fallbackPhoto = `https://ui-avatars.com/api/?name=${encodeURIComponent(row.id)}&background=334155&color=fff`;
+
+    return {
+        id: row.id,
+        role,
+        firstNameTH: row.first_name_th || '-',
+        lastNameTH: row.last_name_th || '-',
+        firstNameEN: row.first_name_en || '-',
+        lastNameEN: row.last_name_en || '-',
+        nickname: row.nickname || row.first_name_en || row.id,
+        position: row.position || '-',
+        department: row.department || '-',
+        status: row.status || 'Active',
+        photoUrl: row.photo_url || fallbackPhoto,
+        pin: row.pin || '123456',
+        email: row.email || '',
+        phoneNumber: row.phone_number || '',
+        birthDate: row.birth_date || '',
+        emergencyContactName: row.emergency_contact_name || '',
+        emergencyContactPhone: row.emergency_contact_phone || '',
+        selfieUrl: row.selfie_url || row.photo_url || fallbackPhoto,
+        idCardUrl: row.id_card_url || '',
+        passportUrl: row.passport_url || '',
+        startDate: row.start_date || new Date().toISOString().slice(0, 10),
+        defaultShiftId: row.default_shift_id as AppEmployee['defaultShiftId'],
+    };
+};
+
+const toPayload = (employee: AppEmployee): Record<string, string> => {
+    return {
+        id: employee.id,
+        role: employee.role,
+        photo_url: employee.photoUrl,
+        first_name_th: employee.firstNameTH,
+        last_name_th: employee.lastNameTH,
+        first_name_en: employee.firstNameEN,
+        last_name_en: employee.lastNameEN,
+        nickname: employee.nickname,
+        position: employee.position,
+        department: employee.department,
+        status: employee.status,
+        pin: employee.pin,
+        email: employee.email,
+        phone_number: employee.phoneNumber,
+        birth_date: employee.birthDate,
+        emergency_contact_name: employee.emergencyContactName,
+        emergency_contact_phone: employee.emergencyContactPhone,
+        selfie_url: employee.selfieUrl,
+        id_card_url: employee.idCardUrl,
+        passport_url: employee.passportUrl,
+        start_date: employee.startDate,
+        default_shift_id: employee.defaultShiftId || '',
+    };
+};
+
+const withoutKey = (source: Record<string, string>, key: string): Record<string, string> => {
+    const { [key]: ignored, ...rest } = source;
+    void ignored;
+    return rest;
+};
+
+const extractMissingColumn = (message: string): string | null => {
+    const match = message.toLowerCase().match(/'([a-z0-9_]+)' column/);
+    return match?.[1] || null;
+};
+
+const removeColumnsByMessage = (
+    source: Record<string, string>,
+    message: string,
+): { nextPayload: Record<string, string>; removedAny: boolean } => {
+    let nextPayload = { ...source };
+    let removedAny = false;
+    const normalizedMessage = message.toLowerCase();
+
+    legacyOptionalColumns.forEach((column) => {
+        if (normalizedMessage.includes(column) && column in nextPayload) {
+            nextPayload = withoutKey(nextPayload, column);
+            removedAny = true;
+        }
+    });
+
+    const discoveredColumn = extractMissingColumn(normalizedMessage);
+    if (discoveredColumn && discoveredColumn in nextPayload) {
+        nextPayload = withoutKey(nextPayload, discoveredColumn);
+        removedAny = true;
+    }
+
+    return { nextPayload, removedAny };
+};
+
+const retryUpsertWithLegacyPayload = async (payload: Record<string, string>, message: string): Promise<void> => {
+    let fallbackPayload = { ...payload };
+    let lastMessage = message;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        const { nextPayload, removedAny } = removeColumnsByMessage(fallbackPayload, lastMessage);
+        if (!removedAny) {
+            throw new Error(lastMessage);
+        }
+
+        fallbackPayload = nextPayload;
+        const { error } = await supabase.from(tableName).upsert(fallbackPayload);
+        if (!error) {
+            return;
+        }
+
+        lastMessage = error.message;
+    }
+
+    throw new Error(lastMessage);
+};
+
+export const appEmployeeService = {
+    async getEmployees(): Promise<AppEmployee[]> {
+        try {
+            const { data, error } = await supabase
+                .from(tableName)
+                .select('*')
+                .order('id', { ascending: true });
+
+            if (error) {
+                throw error;
+            }
+
+            const rows = (data as EmployeeRow[]) || [];
+            if (rows.length === 0) {
+                return FALLBACK_EMPLOYEES;
+            }
+
+            return rows.map(toAppEmployee);
+        } catch {
+            return FALLBACK_EMPLOYEES;
+        }
+    },
+
+    async upsertEmployee(employee: AppEmployee): Promise<void> {
+        const payload = toPayload(employee);
+        const { error } = await supabase.from(tableName).upsert(payload);
+        if (!error) {
+            return;
+        }
+
+        await retryUpsertWithLegacyPayload(payload, error.message);
+    },
+
+    async getEmployeeById(id: string): Promise<AppEmployee | null> {
+        const normalized = id.trim().toUpperCase();
+        if (!normalized) {
+            return null;
+        }
+
+        try {
+            const { data, error } = await supabase
+                .from(tableName)
+                .select('*')
+                .eq('id', normalized)
+                .maybeSingle();
+
+            if (error) {
+                throw error;
+            }
+
+            if (!data) {
+                return null;
+            }
+
+            return toAppEmployee(data as EmployeeRow);
+        } catch {
+            const rows = await appEmployeeService.getEmployees();
+            return rows.find((employee) => employee.id.trim().toUpperCase() === normalized) || null;
+        }
+    },
+
+    async verifyEmployeePin(id: string, pin: string): Promise<AppEmployee> {
+        const normalized = id.trim().toUpperCase();
+        const sanitizedPin = sanitizePin(pin);
+
+        if (!normalized) {
+            throw new Error('กรุณาระบุรหัสพนักงาน');
+        }
+        if (sanitizedPin.length < 4) {
+            throw new Error('กรุณากรอก PIN เดิมให้ถูกต้อง');
+        }
+
+        const employee = await appEmployeeService.getEmployeeById(normalized);
+        if (!employee) {
+            throw new Error('ไม่พบรหัสพนักงานที่แอดมินสร้างไว้');
+        }
+
+        const currentPin = sanitizePin(employee.pin || '123456');
+        if (currentPin !== sanitizedPin) {
+            throw new Error('PIN เดิมไม่ถูกต้อง หากจำ PIN ไม่ได้ให้ติดต่อแอดมิน');
+        }
+
+        return employee;
+    },
+
+    async changeEmployeePin(id: string, currentPin: string, newPin: string): Promise<void> {
+        const normalized = id.trim().toUpperCase();
+        const sanitizedNewPin = sanitizePin(newPin);
+
+        if (sanitizedNewPin.length < 4) {
+            throw new Error('PIN ใหม่ต้องมีอย่างน้อย 4 หลัก');
+        }
+
+        await appEmployeeService.verifyEmployeePin(normalized, currentPin);
+        await appEmployeeService.updateEmployeePin(normalized, sanitizedNewPin);
+    },
+
+    async updateEmployeePin(id: string, pin: string): Promise<void> {
+        const normalized = id.trim().toUpperCase();
+        const sanitizedPin = sanitizePin(pin);
+
+        if (!normalized) {
+            throw new Error('กรุณาระบุรหัสพนักงาน');
+        }
+        if (sanitizedPin.length < 4) {
+            throw new Error('PIN ต้องอย่างน้อย 4 หลัก');
+        }
+
+        const { data, error } = await supabase
+            .from(tableName)
+            .update({ pin: sanitizedPin })
+            .eq('id', normalized)
+            .select('id')
+            .maybeSingle();
+
+        if (error) {
+            throw new Error(error.message);
+        }
+
+        if (!data) {
+            throw new Error('ไม่พบรหัสพนักงานที่แอดมินสร้างไว้');
+        }
+    },
+
+    async deleteEmployee(id: string): Promise<void> {
+        const { error } = await supabase.from(tableName).delete().eq('id', id);
+        if (error) {
+            throw new Error(error.message);
+        }
+    },
+};
