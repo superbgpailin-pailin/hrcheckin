@@ -45,9 +45,35 @@ const getNextEmployeeId = (employees: AppEmployee[]): string => {
     return buildEmployeeId(cursor.maxNumber + 1, cursor.padLength);
 };
 
-const getNextEmployeeIds = (employees: AppEmployee[], count: number): string[] => {
-    const cursor = getEmployeeIdCursor(employees);
-    return Array.from({ length: count }, (_, index) => buildEmployeeId(cursor.maxNumber + index + 1, cursor.padLength));
+const getEmployeeIdsFromRange = (value: string): { ids: string[]; error?: undefined } | { ids?: undefined; error: string } => {
+    const normalized = value.trim().toUpperCase();
+    const matched = normalized.match(/^([A-Z]+)(\d+)\s*-\s*([A-Z]+)(\d+)$/);
+    if (!matched) {
+        return { error: 'รูปแบบช่วงรหัสไม่ถูกต้อง (ตัวอย่าง: CR001-CR020)' };
+    }
+
+    const [, startPrefix, startDigits, endPrefix, endDigits] = matched;
+    if (startPrefix !== endPrefix) {
+        return { error: 'ช่วงรหัสต้องใช้ Prefix เดียวกัน' };
+    }
+
+    const startNumber = Number.parseInt(startDigits, 10);
+    const endNumber = Number.parseInt(endDigits, 10);
+    if (Number.isNaN(startNumber) || Number.isNaN(endNumber)) {
+        return { error: 'ไม่สามารถอ่านเลขรหัสพนักงานได้' };
+    }
+    if (startNumber > endNumber) {
+        return { error: 'รหัสเริ่มต้นต้องน้อยกว่าหรือเท่ารหัสสิ้นสุด' };
+    }
+
+    const total = endNumber - startNumber + 1;
+    if (total > 500) {
+        return { error: 'สร้างได้สูงสุด 500 คนต่อครั้ง' };
+    }
+
+    const padLength = Math.max(startDigits.length, endDigits.length, EMPLOYEE_ID_PAD);
+    const ids = Array.from({ length: total }, (_, index) => `${startPrefix}${String(startNumber + index).padStart(padLength, '0')}`);
+    return { ids };
 };
 
 const createNewEmployee = (id: string): AppEmployee => {
@@ -405,7 +431,7 @@ export const AppEmployees: React.FC = () => {
     const [query, setQuery] = useState('');
     const [editorState, setEditorState] = useState<AppEmployee | null>(null);
     const [viewerState, setViewerState] = useState<AppEmployee | null>(null);
-    const [bulkCreateCount, setBulkCreateCount] = useState('5');
+    const [bulkCreateRange, setBulkCreateRange] = useState('');
     const [bulkCreateNotice, setBulkCreateNotice] = useState('');
     const [bulkCreating, setBulkCreating] = useState(false);
 
@@ -441,31 +467,30 @@ export const AppEmployees: React.FC = () => {
     };
 
     const createEmployeesInBulk = async () => {
-        const count = Number.parseInt(bulkCreateCount, 10);
-        if (Number.isNaN(count) || count <= 0) {
-            setBulkCreateNotice('Please enter a valid amount.');
+        const rangeResult = getEmployeeIdsFromRange(bulkCreateRange);
+        if (!rangeResult.ids) {
+            setBulkCreateNotice(rangeResult.error);
             return;
         }
 
-        if (count > 200) {
-            setBulkCreateNotice('Maximum 200 employees per batch.');
-            return;
-        }
-
-        const nextIds = getNextEmployeeIds(employees, count);
-        if (nextIds.length === 0) {
-            setBulkCreateNotice('No employee IDs available for creation.');
+        const existingIds = new Set(employees.map((employee) => employee.id.trim().toUpperCase()));
+        const duplicatedIds = rangeResult.ids.filter((id) => existingIds.has(id));
+        if (duplicatedIds.length > 0) {
+            const sample = duplicatedIds.slice(0, 5).join(', ');
+            const suffix = duplicatedIds.length > 5 ? ` +${duplicatedIds.length - 5}` : '';
+            setBulkCreateNotice(`มีรหัสซ้ำในระบบแล้ว: ${sample}${suffix}`);
             return;
         }
 
         setBulkCreating(true);
         setBulkCreateNotice('');
         try {
-            const items = nextIds.map((id) => createNewEmployee(id));
+            const items = rangeResult.ids.map((id) => createNewEmployee(id));
             await saveEmployees(items);
-            setBulkCreateNotice(`Created ${items.length} employees. Default PIN: 111111`);
+            setBulkCreateNotice(`สร้างพนักงาน ${items.length} คนเรียบร้อย (PIN อัตโนมัติ 111111)`);
+            setBulkCreateRange('');
         } catch (error) {
-            setBulkCreateNotice(error instanceof Error ? error.message : 'Failed to create employees.');
+            setBulkCreateNotice(error instanceof Error ? error.message : 'สร้างพนักงานไม่สำเร็จ');
         } finally {
             setBulkCreating(false);
         }
@@ -498,16 +523,13 @@ export const AppEmployees: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label>Bulk Create (PIN 111111)</label>
+                        <label>สร้างหลายคนด้วยช่วงรหัส (PIN 111111)</label>
                         <input
-                            type="number"
-                            min={1}
-                            max={200}
-                            value={bulkCreateCount}
-                            onChange={(event) => setBulkCreateCount(event.target.value.replace(/\D/g, ''))}
-                            placeholder="e.g. 10"
+                            value={bulkCreateRange}
+                            onChange={(event) => setBulkCreateRange(event.target.value.toUpperCase())}
+                            placeholder="CR001-CR020"
                         />
-                        <div className="panel-muted">Auto-generate sequential employee IDs from the latest code.</div>
+                        <div className="panel-muted">รูปแบบ: รหัสเริ่ม-รหัสสิ้นสุด เช่น CR001-CR020</div>
                     </div>
                 </div>
 
@@ -518,7 +540,7 @@ export const AppEmployees: React.FC = () => {
                         disabled={bulkCreating}
                         onClick={() => void createEmployeesInBulk()}
                     >
-                        {bulkCreating ? 'Creating...' : 'Create Batch'}
+                        {bulkCreating ? 'กำลังสร้าง...' : 'สร้างจากช่วงรหัส'}
                     </button>
                 </div>
 

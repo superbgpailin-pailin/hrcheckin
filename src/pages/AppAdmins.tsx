@@ -2,7 +2,15 @@ import React, { useMemo, useState } from 'react';
 import { usePortalAuth } from '../context/PortalAuthContext';
 
 export const AppAdmins: React.FC = () => {
-    const { portalUser, portalAdmins, addPortalAdmin, changeOwnPassword } = usePortalAuth();
+    const {
+        portalUser,
+        portalAdmins,
+        addPortalAdmin,
+        changeOwnPassword,
+        updatePortalAdmin,
+        deletePortalAdmin,
+    } = usePortalAuth();
+
     const [username, setUsername] = useState('');
     const [displayName, setDisplayName] = useState('');
     const [password, setPassword] = useState('');
@@ -14,6 +22,12 @@ export const AppAdmins: React.FC = () => {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [passwordNotice, setPasswordNotice] = useState('');
     const [changingPassword, setChangingPassword] = useState(false);
+
+    const [editingUsername, setEditingUsername] = useState<string | null>(null);
+    const [editDisplayName, setEditDisplayName] = useState('');
+    const [editPassword, setEditPassword] = useState('');
+    const [manageNotice, setManageNotice] = useState('');
+    const [managing, setManaging] = useState(false);
 
     const canManage = portalUser?.role === 'Master';
 
@@ -64,6 +78,55 @@ export const AppAdmins: React.FC = () => {
         setCurrentPassword('');
         setNextPassword('');
         setConfirmPassword('');
+    };
+
+    const startEdit = (targetUsername: string, targetDisplayName: string) => {
+        setEditingUsername(targetUsername);
+        setEditDisplayName(targetDisplayName);
+        setEditPassword('');
+        setManageNotice('');
+    };
+
+    const cancelEdit = () => {
+        setEditingUsername(null);
+        setEditDisplayName('');
+        setEditPassword('');
+    };
+
+    const submitEditAdmin = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!editingUsername) {
+            return;
+        }
+
+        setManaging(true);
+        const result = await updatePortalAdmin({
+            username: editingUsername,
+            displayName: editDisplayName,
+            password: editPassword || undefined,
+        });
+        setManaging(false);
+        setManageNotice(result.message || '');
+        if (!result.success) {
+            return;
+        }
+
+        cancelEdit();
+    };
+
+    const removeAdmin = async (targetUsername: string) => {
+        const confirmed = window.confirm(`Delete admin "${targetUsername}" ?`);
+        if (!confirmed) {
+            return;
+        }
+
+        setManaging(true);
+        const result = await deletePortalAdmin(targetUsername);
+        setManaging(false);
+        setManageNotice(result.message || '');
+        if (editingUsername === targetUsername) {
+            cancelEdit();
+        }
     };
 
     return (
@@ -160,6 +223,42 @@ export const AppAdmins: React.FC = () => {
                 {adminNotice ? <p className="panel-muted" style={{ marginTop: '0.8rem' }}>{adminNotice}</p> : null}
             </section>
 
+            {canManage && editingUsername ? (
+                <section className="panel">
+                    <div className="panel-head">
+                        <h3>แก้ไขแอดมิน</h3>
+                        <span>{editingUsername}</span>
+                    </div>
+
+                    <form onSubmit={(event) => void submitEditAdmin(event)} className="filter-grid">
+                        <div>
+                            <label>ชื่อแสดงผล</label>
+                            <input
+                                value={editDisplayName}
+                                onChange={(event) => setEditDisplayName(event.target.value)}
+                                placeholder="Display Name"
+                            />
+                        </div>
+                        <div>
+                            <label>รหัสผ่านใหม่ (ถ้าไม่เปลี่ยนให้เว้นว่าง)</label>
+                            <input
+                                type="password"
+                                value={editPassword}
+                                onChange={(event) => setEditPassword(event.target.value)}
+                                placeholder="New password"
+                            />
+                        </div>
+
+                        <div className="inline-actions" style={{ gridColumn: '1 / -1', justifyContent: 'flex-end' }}>
+                            <button type="button" className="btn-muted" onClick={cancelEdit}>ยกเลิก</button>
+                            <button type="submit" className="btn-primary" disabled={managing}>
+                                {managing ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}
+                            </button>
+                        </div>
+                    </form>
+                </section>
+            ) : null}
+
             <section className="panel table-panel">
                 <div className="panel-head">
                     <h3>บัญชีผู้ดูแลระบบ</h3>
@@ -173,6 +272,7 @@ export const AppAdmins: React.FC = () => {
                                 <th>Username</th>
                                 <th>ชื่อ</th>
                                 <th>Role</th>
+                                <th />
                             </tr>
                         </thead>
                         <tbody>
@@ -181,11 +281,35 @@ export const AppAdmins: React.FC = () => {
                                     <td>{admin.username}</td>
                                     <td>{admin.displayName}</td>
                                     <td>{admin.role}</td>
+                                    <td>
+                                        {canManage && admin.role !== 'Master' ? (
+                                            <div className="inline-actions" style={{ justifyContent: 'flex-end' }}>
+                                                <button
+                                                    type="button"
+                                                    className="btn-muted"
+                                                    onClick={() => startEdit(admin.username, admin.displayName)}
+                                                >
+                                                    แก้ไข
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="btn-danger"
+                                                    onClick={() => void removeAdmin(admin.username)}
+                                                >
+                                                    ลบ
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <span className="panel-muted">-</span>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
+
+                {manageNotice ? <p className="panel-muted" style={{ marginTop: '0.8rem' }}>{manageNotice}</p> : null}
             </section>
         </div>
     );

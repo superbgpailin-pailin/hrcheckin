@@ -19,6 +19,22 @@ interface AddPortalAdminResult {
     message?: string;
 }
 
+interface UpdatePortalAdminInput {
+    username: string;
+    displayName: string;
+    password?: string;
+}
+
+interface UpdatePortalAdminResult {
+    success: boolean;
+    message?: string;
+}
+
+interface DeletePortalAdminResult {
+    success: boolean;
+    message?: string;
+}
+
 interface ChangeOwnPasswordInput {
     currentPassword: string;
     newPassword: string;
@@ -35,6 +51,8 @@ interface PortalAuthContextValue {
     loginPortal: (username: string, password: string) => LoginResult;
     logoutPortal: () => void;
     addPortalAdmin: (input: AddPortalAdminInput) => Promise<AddPortalAdminResult>;
+    updatePortalAdmin: (input: UpdatePortalAdminInput) => Promise<UpdatePortalAdminResult>;
+    deletePortalAdmin: (username: string) => Promise<DeletePortalAdminResult>;
     changeOwnPassword: (input: ChangeOwnPasswordInput) => Promise<ChangeOwnPasswordResult>;
 }
 
@@ -237,6 +255,40 @@ const updateRemoteAccountPassword = async (username: string, password: string): 
     }
 };
 
+const updateRemoteAccount = async (username: string, payload: Record<string, string>): Promise<void> => {
+    const { data, error } = await supabase
+        .from(ACCOUNTS_TABLE)
+        .update(payload)
+        .eq('username', normalizeUsername(username))
+        .select('username')
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+
+    if (!data) {
+        throw new Error('Account not found');
+    }
+};
+
+const deleteRemoteAccount = async (username: string): Promise<void> => {
+    const { data, error } = await supabase
+        .from(ACCOUNTS_TABLE)
+        .delete()
+        .eq('username', normalizeUsername(username))
+        .select('username')
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+
+    if (!data) {
+        throw new Error('Account not found');
+    }
+};
+
 const PortalAuthContext = createContext<PortalAuthContextValue | undefined>(undefined);
 
 export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -390,6 +442,114 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return { success: true, message: 'เพิ่มแอดมินเรียบร้อยแล้ว' };
     }, [accounts, portalUser, reloadAccounts]);
 
+    const updatePortalAdmin = useCallback(async (input: UpdatePortalAdminInput): Promise<UpdatePortalAdminResult> => {
+        if (!portalUser || portalUser.role !== 'Master') {
+            return { success: false, message: 'Only master can edit admin accounts.' };
+        }
+
+        const username = normalizeUsername(input.username);
+        if (!username) {
+            return { success: false, message: 'Username is required.' };
+        }
+        if (username === 'master') {
+            return { success: false, message: 'Master account cannot be edited here.' };
+        }
+
+        const target = accounts.find((account) => normalizeUsername(account.username) === username);
+        if (!target) {
+            return { success: false, message: 'Admin account not found.' };
+        }
+
+        const displayName = input.displayName.trim();
+        if (!displayName) {
+            return { success: false, message: 'Display name is required.' };
+        }
+
+        const nextPassword = (input.password || '').trim();
+        if (nextPassword && nextPassword.length < 6) {
+            return { success: false, message: 'Password must be at least 6 characters.' };
+        }
+
+        const nextPhotoUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=1d4ed8&color=fff`;
+        if (!accountsTableUnavailable) {
+            try {
+                const remotePayload: Record<string, string> = {
+                    display_name: displayName,
+                    photo_url: nextPhotoUrl,
+                };
+                if (nextPassword) {
+                    remotePayload.password = nextPassword;
+                }
+                await updateRemoteAccount(username, remotePayload);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error || '');
+                if (isSchemaMissingError(message)) {
+                    accountsTableUnavailable = true;
+                } else {
+                    return { success: false, message };
+                }
+            }
+        }
+
+        const next = accounts.map((account) => {
+            if (normalizeUsername(account.username) !== username) {
+                return account;
+            }
+            return {
+                ...account,
+                displayName,
+                photoUrl: nextPhotoUrl,
+                password: nextPassword || account.password,
+            };
+        });
+
+        const deduped = dedupeAccounts(next);
+        setAccounts(deduped);
+        persistAccounts(deduped);
+        return { success: true, message: 'Admin updated successfully.' };
+    }, [accounts, portalUser]);
+
+    const deletePortalAdmin = useCallback(async (usernameInput: string): Promise<DeletePortalAdminResult> => {
+        if (!portalUser || portalUser.role !== 'Master') {
+            return { success: false, message: 'Only master can delete admin accounts.' };
+        }
+
+        const username = normalizeUsername(usernameInput);
+        if (!username) {
+            return { success: false, message: 'Username is required.' };
+        }
+        if (username === 'master') {
+            return { success: false, message: 'Master account cannot be deleted.' };
+        }
+        if (normalizeUsername(portalUser.username) === username) {
+            return { success: false, message: 'Cannot delete the current signed-in account.' };
+        }
+
+        const target = accounts.find((account) => normalizeUsername(account.username) === username);
+        if (!target) {
+            return { success: false, message: 'Admin account not found.' };
+        }
+
+        if (!accountsTableUnavailable) {
+            try {
+                await deleteRemoteAccount(username);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error || '');
+                if (isSchemaMissingError(message)) {
+                    accountsTableUnavailable = true;
+                } else {
+                    return { success: false, message };
+                }
+            }
+        }
+
+        const next = accounts.filter((account) => normalizeUsername(account.username) !== username);
+        const deduped = dedupeAccounts(next);
+        setAccounts(deduped);
+        persistAccounts(deduped);
+        return { success: true, message: 'Admin deleted successfully.' };
+    }, [accounts, portalUser]);
+
     const changeOwnPassword = useCallback(async (input: ChangeOwnPasswordInput): Promise<ChangeOwnPasswordResult> => {
         if (!portalUser) {
             return { success: false, message: 'กรุณาเข้าสู่ระบบใหม่อีกครั้ง' };
@@ -451,9 +611,11 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             loginPortal,
             logoutPortal,
             addPortalAdmin,
+            updatePortalAdmin,
+            deletePortalAdmin,
             changeOwnPassword,
         };
-    }, [addPortalAdmin, changeOwnPassword, loginPortal, logoutPortal, portalAdmins, portalUser]);
+    }, [addPortalAdmin, changeOwnPassword, deletePortalAdmin, loginPortal, logoutPortal, portalAdmins, portalUser, updatePortalAdmin]);
 
     return <PortalAuthContext.Provider value={value}>{children}</PortalAuthContext.Provider>;
 };
