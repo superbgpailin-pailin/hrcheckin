@@ -2,17 +2,20 @@
 
 interface AdminLoginPageProps {
     onBack: () => void;
-    onLogin: (username: string, password: string) => { success: boolean; message?: string };
+    onLogin: (username: string, password: string) => Promise<{ success: boolean; message?: string }>;
 }
 
 export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onBack, onLogin }) => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [submitting, setSubmitting] = useState(false);
 
-    const submit = (event: React.FormEvent) => {
+    const submit = async (event: React.FormEvent) => {
         event.preventDefault();
-        const result = onLogin(username, password);
+        setSubmitting(true);
+        const result = await onLogin(username, password);
+        setSubmitting(false);
         if (!result.success) {
             setError(result.message || 'เข้าสู่ระบบไม่สำเร็จ');
             return;
@@ -46,8 +49,10 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onBack, onLogin 
                 {error ? <div className="form-error">{error}</div> : null}
 
                 <div className="auth-actions">
-                    <button type="button" className="btn-muted" onClick={onBack}>กลับหน้าหลัก</button>
-                    <button type="submit" className="btn-primary">เข้าสู่ระบบ</button>
+                    <button type="button" className="btn-muted" onClick={onBack} disabled={submitting}>กลับหน้าหลัก</button>
+                    <button type="submit" className="btn-primary" disabled={submitting}>
+                        {submitting ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}
+                    </button>
                 </div>
             </form>
         </div>

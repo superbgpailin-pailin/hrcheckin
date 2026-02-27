@@ -48,7 +48,7 @@ interface ChangeOwnPasswordResult {
 interface PortalAuthContextValue {
     portalUser: PortalUser | null;
     portalAdmins: PortalUser[];
-    loginPortal: (username: string, password: string) => LoginResult;
+    loginPortal: (username: string, password: string) => Promise<LoginResult>;
     logoutPortal: () => void;
     addPortalAdmin: (input: AddPortalAdminInput) => Promise<AddPortalAdminResult>;
     updatePortalAdmin: (input: UpdatePortalAdminInput) => Promise<UpdatePortalAdminResult>;
@@ -240,6 +240,25 @@ const fetchRemoteAccounts = async (): Promise<PortalAccount[]> => {
         .filter((item): item is PortalAccount => Boolean(item));
 };
 
+const fetchRemoteAccountByUsername = async (username: string): Promise<PortalAccount | null> => {
+    const { data, error } = await supabase
+        .from(ACCOUNTS_TABLE)
+        .select('username, display_name, role, photo_url, password, active')
+        .eq('username', normalizeUsername(username))
+        .limit(1);
+
+    if (error) {
+        throw error;
+    }
+
+    const rows = (data as PortalAccountRow[] | null) || [];
+    const mapped = rows
+        .map(fromRow)
+        .filter((item): item is PortalAccount => Boolean(item));
+
+    return mapped[0] || null;
+};
+
 const insertRemoteAccount = async (account: PortalAccount): Promise<void> => {
     const { error } = await supabase
         .from(ACCOUNTS_TABLE)
@@ -362,10 +381,45 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             .map(toPortalUser);
     }, [accounts]);
 
-    const loginPortal = useCallback((username: string, password: string): LoginResult => {
+    const loginPortal = useCallback(async (username: string, password: string): Promise<LoginResult> => {
         const normalized = normalizeUsername(username);
-        const account = accounts.find((item) => normalizeUsername(item.username) === normalized);
 
+        if (!accountsTableUnavailable) {
+            try {
+                const remoteAccount = await fetchRemoteAccountByUsername(normalized);
+                if (!remoteAccount) {
+                    return { success: false, message: 'ไม่พบบัญชีผู้ดูแลระบบ' };
+                }
+
+                const nextAccounts = dedupeAccounts([
+                    ...accounts.filter((item) => normalizeUsername(item.username) !== normalized),
+                    remoteAccount,
+                ]);
+                setAccounts(nextAccounts);
+                persistAccounts(nextAccounts);
+
+                if (!remoteAccount.active) {
+                    return { success: false, message: 'บัญชีถูกระงับการใช้งาน' };
+                }
+
+                if (remoteAccount.password !== password) {
+                    return { success: false, message: 'รหัสผ่านไม่ถูกต้อง' };
+                }
+
+                setPortalUsername(remoteAccount.username);
+                localStorage.setItem(STORAGE_KEY_CURRENT_USER, remoteAccount.username);
+                return { success: true };
+            } catch (error) {
+                const message = getErrorMessage(error);
+                if (isSchemaMissingError(message)) {
+                    accountsTableUnavailable = true;
+                } else {
+                    return { success: false, message };
+                }
+            }
+        }
+
+        const account = accounts.find((item) => normalizeUsername(item.username) === normalized);
         if (!account) {
             return { success: false, message: 'ไม่พบบัญชีผู้ดูแลระบบ' };
         }

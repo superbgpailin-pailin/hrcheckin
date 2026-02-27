@@ -130,8 +130,8 @@ const AppContent: React.FC = () => {
             return (
                 <AdminLoginPage
                     onBack={openLanding}
-                    onLogin={(username, password) => {
-                        const result = loginPortal(username, password);
+                    onLogin={async (username, password) => {
+                        const result = await loginPortal(username, password);
                         if (result.success) {
                             openKioskPage();
                         }
@@ -148,8 +148,8 @@ const AppContent: React.FC = () => {
         return (
             <AdminLoginPage
                 onBack={openLanding}
-                onLogin={(username, password) => {
-                    const result = loginPortal(username, password);
+                onLogin={async (username, password) => {
+                    const result = await loginPortal(username, password);
                     if (result.success) {
                         if (route.loginNext === 'kiosk') {
                             openKioskPage();
@@ -167,8 +167,8 @@ const AppContent: React.FC = () => {
         return (
             <AdminLoginPage
                 onBack={openLanding}
-                onLogin={(username, password) => {
-                    const result = loginPortal(username, password);
+                onLogin={async (username, password) => {
+                    const result = await loginPortal(username, password);
                     if (result.success) {
                         openPortal(route.portalPage);
                     }
