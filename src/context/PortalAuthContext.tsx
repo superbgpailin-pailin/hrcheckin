@@ -239,53 +239,35 @@ const insertRemoteAccount = async (account: PortalAccount): Promise<void> => {
 };
 
 const updateRemoteAccountPassword = async (username: string, password: string): Promise<void> => {
-    const { data, error } = await supabase
+    const { error } = await supabase
         .from(ACCOUNTS_TABLE)
         .update({ password })
-        .eq('username', normalizeUsername(username))
-        .select('username')
-        .maybeSingle();
+        .eq('username', normalizeUsername(username));
 
     if (error) {
         throw error;
-    }
-
-    if (!data) {
-        throw new Error('Account not found');
     }
 };
 
 const updateRemoteAccount = async (username: string, payload: Record<string, string>): Promise<void> => {
-    const { data, error } = await supabase
+    const { error } = await supabase
         .from(ACCOUNTS_TABLE)
         .update(payload)
-        .eq('username', normalizeUsername(username))
-        .select('username')
-        .maybeSingle();
+        .eq('username', normalizeUsername(username));
 
     if (error) {
         throw error;
-    }
-
-    if (!data) {
-        throw new Error('Account not found');
     }
 };
 
 const deleteRemoteAccount = async (username: string): Promise<void> => {
-    const { data, error } = await supabase
+    const { error } = await supabase
         .from(ACCOUNTS_TABLE)
         .delete()
-        .eq('username', normalizeUsername(username))
-        .select('username')
-        .maybeSingle();
+        .eq('username', normalizeUsername(username));
 
     if (error) {
         throw error;
-    }
-
-    if (!data) {
-        throw new Error('Account not found');
     }
 };
 
