@@ -34,6 +34,7 @@ const BACKEND_UNAVAILABLE_MESSAGE = 'เซิร์ฟเวอร์ฐาน�
 const employeeSelectFields = [
     'id',
     'role',
+    'photo_url',
     'first_name_th',
     'last_name_th',
     'first_name_en',
@@ -48,6 +49,7 @@ const employeeSelectFields = [
     'birth_date',
     'emergency_contact_name',
     'emergency_contact_phone',
+    'selfie_url',
     'start_date',
     'default_shift_id',
 ].join(', ');

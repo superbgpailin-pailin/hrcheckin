@@ -17,7 +17,7 @@ const attendanceSelectColumns = [
     'type',
     'photo_url',
 ];
-const duplicateCheckInMessage = 'วันนี้เช็คอินแล้ว';
+const duplicateCheckInMessage = 'You already checked in today.';
 const saveFailedMessage = 'Check-in could not be saved on the server. Please try again or contact admin.';
 const readFailedMessage = 'Database server is slow or unavailable. Please try again.';
 
@@ -85,10 +85,21 @@ const optionalInsertColumns = [
     'check_in_time',
 ];
 
-const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v1';
+const optionalUpdateColumns = [
+    'shift',
+    'shift_name',
+    'timestamp',
+    'status',
+    'photo_url',
+];
+
+const LEGACY_ATTENDANCE_CACHE_PREFIXES = ['hrcheckin_attendance_cache_v1'];
+const LEGACY_ATTENDANCE_SELECT_COLUMNS_CACHE_KEYS = ['hrcheckin_attendance_select_columns_v2', 'hrcheckin_attendance_select_columns_v3'];
+const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v2';
 const ATTENDANCE_CACHE_TTL_MS = 30 * 1000;
-const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v3';
+const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v4';
 let resolvedAttendanceSelectColumns = [...attendanceSelectColumns];
+let legacyAttendanceCacheCleared = false;
 
 const attendanceCacheKey = (filters: AttendanceFilters): string => {
     return [
@@ -99,7 +110,35 @@ const attendanceCacheKey = (filters: AttendanceFilters): string => {
     ].join(':');
 };
 
+const clearLegacyAttendanceCache = (): void => {
+    if (legacyAttendanceCacheCleared || typeof localStorage === 'undefined') {
+        return;
+    }
+
+    const keysToDelete: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (!key) {
+            continue;
+        }
+
+        if (LEGACY_ATTENDANCE_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+            keysToDelete.push(key);
+        }
+    }
+
+    LEGACY_ATTENDANCE_SELECT_COLUMNS_CACHE_KEYS.forEach((key) => {
+        if (localStorage.getItem(key)) {
+            keysToDelete.push(key);
+        }
+    });
+
+    keysToDelete.forEach((key) => localStorage.removeItem(key));
+    legacyAttendanceCacheCleared = true;
+};
+
 const readAttendanceCache = (filters: AttendanceFilters): NormalizedAttendanceRow[] | null => {
+    clearLegacyAttendanceCache();
     try {
         const raw = localStorage.getItem(attendanceCacheKey(filters));
         if (!raw) {
@@ -123,6 +162,7 @@ const readAttendanceCache = (filters: AttendanceFilters): NormalizedAttendanceRo
 };
 
 const readAttendanceSelectColumnsCache = (): string[] | null => {
+    clearLegacyAttendanceCache();
     try {
         const raw = localStorage.getItem(ATTENDANCE_SELECT_COLUMNS_CACHE_KEY);
         if (!raw) {
@@ -297,7 +337,7 @@ const toSummary = (
         status: row.status || (lateMinutes > 0 ? 'Late' : 'On Time'),
         source: 'QR',
         kioskId: row.site_id || 'kiosk',
-        photoUrl: row.photo_url || '',
+        photoUrl: row.photo_url || employee?.selfieUrl || employee?.photoUrl || '',
     };
 };
 
@@ -445,12 +485,13 @@ const extractMissingColumn = (message: string): string | null => {
 const removeColumnsByMessage = (
     source: Record<string, string | number>,
     message: string,
+    removableColumns = optionalInsertColumns,
 ): { nextPayload: Record<string, string | number>; removedAny: boolean } => {
     const normalized = message.toLowerCase();
     const nextPayload: Record<string, string | number> = { ...source };
     let removedAny = false;
 
-    optionalInsertColumns.forEach((column) => {
+    removableColumns.forEach((column) => {
         if (normalized.includes(column) && column in nextPayload) {
             delete nextPayload[column];
             removedAny = true;
@@ -496,6 +537,35 @@ const insertWithLegacyPayloadFallback = async (payload: Record<string, string | 
     }
 
     throw new Error(lastMessage || saveFailedMessage);
+};
+
+const updateWithLegacyPayloadFallback = async (
+    recordId: string,
+    updates: Record<string, string | number>,
+): Promise<void> => {
+    let workingPayload = { ...updates };
+    let lastMessage = '';
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        const { error } = await supabase
+            .from(tableName)
+            .update(workingPayload)
+            .eq('id', recordId);
+
+        if (!error) {
+            return;
+        }
+
+        lastMessage = error.message;
+        const { nextPayload, removedAny } = removeColumnsByMessage(workingPayload, error.message, optionalUpdateColumns);
+        if (!removedAny) {
+            throw error;
+        }
+
+        workingPayload = nextPayload;
+    }
+
+    throw new Error(lastMessage || 'Unable to update check-in.');
 };
 
 export const appAttendanceService = {
@@ -614,16 +684,23 @@ export const appAttendanceService = {
         clearAttendanceCache();
     },
 
-    async updateCheckIn(recordId: string, updates: { shift_name?: string; shift?: string; timestamp?: string; status?: string }): Promise<void> {
-        const { error } = await supabase
-            .from(tableName)
-            .update(updates)
-            .eq('id', recordId);
+    async updateCheckIn(recordId: string, updates: { shift_name?: string; timestamp?: string; status?: string; photo_url?: string }): Promise<void> {
+        const payload: Record<string, string | number> = {};
 
-        if (error) {
-            throw new Error(error.message);
+        if (updates.shift_name) {
+            payload.shift_name = updates.shift_name;
+        }
+        if (updates.timestamp) {
+            payload.timestamp = updates.timestamp;
+        }
+        if (updates.status) {
+            payload.status = updates.status;
+        }
+        if (updates.photo_url) {
+            payload.photo_url = updates.photo_url;
         }
 
+        await updateWithLegacyPayloadFallback(recordId, payload);
         clearAttendanceCache();
     },
 };

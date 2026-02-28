@@ -1,16 +1,19 @@
 /**
  * Shared Supabase utility functions
- * Previously duplicated across appAttendanceService, appEmployeeService,
- * appSettingsService, PortalAuthContext, and appProfileRequestService.
+ * Previously duplicated across appAttendanceService,
+ * appEmployeeService, appSettingsService, PortalAuthContext,
+ * and appProfileRequestService.
  */
 
 const READ_TIMEOUT_MS = 8000;
 const READ_RETRY_COUNT = 1;
+const TIMEOUT_MESSAGE = 'Database server is slow or unavailable. Please try again.';
 
 export const getErrorMessage = (error: unknown): string => {
     if (error instanceof Error) {
         return error.message;
     }
+
     if (
         typeof error === 'object'
         && error !== null
@@ -19,6 +22,7 @@ export const getErrorMessage = (error: unknown): string => {
     ) {
         return (error as { message: string }).message;
     }
+
     return String(error || '');
 };
 
@@ -52,10 +56,7 @@ export const withReadRetry = async <T>(
             return await Promise.race<T>([
                 operation(),
                 new Promise<T>((_, reject) => {
-                    globalThis.setTimeout(
-                        () => reject(new Error('เซิร์ฟเวอร์ตอบช้าหรือไม่พร้อมใช้งาน กรุณาลองใหม่')),
-                        timeoutMs,
-                    );
+                    globalThis.setTimeout(() => reject(new Error(TIMEOUT_MESSAGE)), timeoutMs);
                 }),
             ]);
         } catch (error) {
@@ -64,13 +65,12 @@ export const withReadRetry = async <T>(
             if (!isTransportError(message) || attempt >= retryCount) {
                 throw error;
             }
+
             await new Promise<void>((resolve) => {
                 globalThis.setTimeout(resolve, 350 * (attempt + 1));
             });
         }
     }
 
-    throw lastError instanceof Error
-        ? lastError
-        : new Error('เซิร์ฟเวอร์ตอบช้าหรือไม่พร้อมใช้งาน กรุณาลองใหม่');
+    throw lastError instanceof Error ? lastError : new Error(TIMEOUT_MESSAGE);
 };

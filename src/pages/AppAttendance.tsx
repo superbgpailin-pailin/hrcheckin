@@ -5,11 +5,15 @@ import { ImageLightbox } from '../components/ImageLightbox';
 import { appAttendanceService } from '../services/appAttendanceService';
 import type { AttendanceSummaryRecord } from '../types/app';
 import { downloadCsv } from '../utils/csv';
-import { formatThaiDateTime } from '../utils/shiftUtils';
+import { formatThaiDateTime, lateMinutesForCheckIn } from '../utils/shiftUtils';
 
 const getEmployeeLabel = (record: AttendanceSummaryRecord): string => {
     const normalized = record.employeeName.trim();
     return normalized || record.employeeId;
+};
+
+const todayBangkokDateInput = (): string => {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
 };
 
 export const AppAttendance: React.FC = () => {
@@ -21,8 +25,8 @@ export const AppAttendance: React.FC = () => {
     const [deletingId, setDeletingId] = useState('');
     const [notice, setNotice] = useState('');
     const [error, setError] = useState('');
-    const [fromDate, setFromDate] = useState(new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
-    const [toDate, setToDate] = useState(new Date().toISOString().slice(0, 10));
+    const [fromDate, setFromDate] = useState(todayBangkokDateInput);
+    const [toDate, setToDate] = useState(todayBangkokDateInput);
     const [employeeId, setEmployeeId] = useState('all');
     const [previewPhoto, setPreviewPhoto] = useState<{ src: string; alt: string } | null>(null);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -136,7 +140,7 @@ export const AppAttendance: React.FC = () => {
 
     const saveEdit = async () => {
         if (!editingRecord) return;
-        const confirmEdit = window.confirm(`กำลังบันทึกการแก้ไขข้อมูลของ ${editingRecord.employeeId} ใช่หรือไม่?`);
+        const confirmEdit = window.confirm(`Save attendance changes for ${editingRecord.employeeId}?`);
         if (!confirmEdit) return;
 
         setError('');
@@ -146,18 +150,20 @@ export const AppAttendance: React.FC = () => {
         try {
             const shiftObj = config.shifts.find(s => s.id === editShiftId) || config.shifts[0];
             const newIso = new Date(`${editDate}T${editTime}:00`).toISOString();
+            const nextLateMinutes = lateMinutesForCheckIn(new Date(newIso), shiftObj, config.lateGraceMinutes);
+            const nextStatus = nextLateMinutes > 0 ? 'Late' : 'On Time';
 
             await appAttendanceService.updateCheckIn(editingRecord.id, {
                 shift_name: shiftObj.id,
-                shift: shiftObj.id,
-                timestamp: newIso
+                timestamp: newIso,
+                status: nextStatus,
             });
 
-            setNotice('แก้ไขข้อมูลสำเร็จ');
+            setNotice('Attendance updated successfully.');
             setEditingRecord(null);
             await load();
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'แก้ไขไม่สำเร็จ');
+            setError(err instanceof Error ? err.message : 'Unable to update attendance.');
             setLoading(false);
         }
     };
@@ -165,7 +171,7 @@ export const AppAttendance: React.FC = () => {
     useEffect(() => {
         void load();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [config.lateGraceMinutes, config.shifts, employees]);
+    }, [config.lateGraceMinutes, config.shifts, employees, fromDate, toDate, employeeId]);
 
     const stats = useMemo(() => {
         const unique = new Set(records.map((record) => `${record.employeeId}:${record.checkInAt.slice(0, 10)}:${record.shiftId}`));
@@ -356,28 +362,28 @@ export const AppAttendance: React.FC = () => {
             {editingRecord ? (
                 <div className="modal-backdrop" onClick={cancelEdit}>
                     <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-                        <div className="modal-icon">✏️</div>
-                        <h3>แก้ไข Check-in</h3>
+                        <div className="modal-icon">Edit</div>
+                        <h3>Edit Check-in</h3>
                         <p style={{ fontWeight: 600, fontSize: '1.05rem', color: '#0f172a' }}>{editingRecord.employeeName}</p>
 
                         <div className="stack-form" style={{ marginTop: '1rem', textAlign: 'left' }}>
-                            <label>กะทำงาน (Shift)</label>
+                            <label>Shift</label>
                             <select value={editShiftId} onChange={(e) => setEditShiftId(e.target.value)}>
                                 {config.shifts.map(s => (
                                     <option key={s.id} value={s.id}>{s.label} ({s.start}-{s.end})</option>
                                 ))}
                             </select>
 
-                            <label>วันที่</label>
+                            <label>Date</label>
                             <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
 
-                            <label>เวลา</label>
+                            <label>Time</label>
                             <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
                         </div>
 
                         <div className="modal-actions" style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
-                            <button type="button" className="btn-muted" onClick={cancelEdit}>ยกเลิก</button>
-                            <button type="button" className="btn-primary" onClick={() => void saveEdit()}>บันทึกการแก้ไข</button>
+                            <button type="button" className="btn-muted" onClick={cancelEdit}>Cancel</button>
+                            <button type="button" className="btn-primary" onClick={() => void saveEdit()}>Save Changes</button>
                         </div>
                     </div>
                 </div>
