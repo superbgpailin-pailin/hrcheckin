@@ -337,7 +337,7 @@ const toSummary = (
         status: row.status || (lateMinutes > 0 ? 'Late' : 'On Time'),
         source: 'QR',
         kioskId: row.site_id || 'kiosk',
-        photoUrl: row.photo_url || employee?.selfieUrl || employee?.photoUrl || '',
+        photoUrl: row.photo_url || '',
     };
 };
 
