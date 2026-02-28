@@ -29,6 +29,30 @@ interface EmployeeRow {
 type EmployeePayload = Record<string, string | null>;
 
 const tableName = 'employees';
+const employeeSelectFields = [
+    'id',
+    'role',
+    'photo_url',
+    'first_name_th',
+    'last_name_th',
+    'first_name_en',
+    'last_name_en',
+    'nickname',
+    'position',
+    'department',
+    'status',
+    'pin',
+    'email',
+    'phone_number',
+    'birth_date',
+    'emergency_contact_name',
+    'emergency_contact_phone',
+    'selfie_url',
+    'id_card_url',
+    'passport_url',
+    'start_date',
+    'default_shift_id',
+].join(', ');
 const legacyOptionalColumns = [
     'default_shift_id',
     'birth_date',
@@ -40,6 +64,24 @@ const legacyOptionalColumns = [
 ];
 
 const sanitizePin = (value: string): string => value.replace(/\D/g, '').slice(0, 6);
+const normalizeEmployeeId = (value: string): string => value.trim().toUpperCase();
+
+const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    if (
+        typeof error === 'object'
+        && error !== null
+        && 'message' in error
+        && typeof (error as { message?: unknown }).message === 'string'
+    ) {
+        return (error as { message: string }).message;
+    }
+
+    return String(error || '');
+};
 
 const normalizeDateOrNull = (value: string | null | undefined): string | null => {
     const normalized = String(value || '').trim();
@@ -225,29 +267,94 @@ const retryBulkUpsertWithLegacyPayload = async (payloads: EmployeePayload[], mes
     throw new Error(lastMessage);
 };
 
-export const appEmployeeService = {
-    async getEmployees(): Promise<AppEmployee[]> {
-        const { data, error } = await supabase
-            .from(tableName)
-            .select('*')
-            .order('id', { ascending: true });
+const updateEmployeeReferenceColumn = async (
+    table: string,
+    column: string,
+    previousId: string,
+    nextId: string,
+): Promise<void> => {
+    const { error } = await supabase
+        .from(table)
+        .update({ [column]: nextId })
+        .eq(column, previousId);
 
-        if (error) {
-            throw new Error(error.message);
-        }
-
-        const rows = (data as EmployeeRow[]) || [];
-        return rows.map(toAppEmployee);
-    },
-
-    async upsertEmployee(employee: AppEmployee): Promise<void> {
-        const payload = toPayload(employee);
-        const { error } = await supabase.from(tableName).upsert(payload);
-        if (!error) {
+    if (error) {
+        const message = getErrorMessage(error).toLowerCase();
+        if (
+            message.includes('does not exist')
+            || message.includes('schema cache')
+            || message.includes('could not find the table')
+            || message.includes('permission denied')
+        ) {
             return;
         }
+        throw new Error(getErrorMessage(error));
+    }
+};
 
-        await retryUpsertWithLegacyPayload(payload, error.message);
+const renameEmployeeRelations = async (previousId: string, nextId: string): Promise<void> => {
+    if (!previousId || previousId === nextId) {
+        return;
+    }
+
+    await updateEmployeeReferenceColumn('attendance', 'employee_id', previousId, nextId).catch(() => undefined);
+    await updateEmployeeReferenceColumn('attendance', 'user_id', previousId, nextId).catch(() => undefined);
+    await updateEmployeeReferenceColumn('employee_profile_requests', 'employee_id', previousId, nextId).catch(() => undefined);
+};
+
+export const appEmployeeService = {
+    async getEmployees(): Promise<AppEmployee[]> {
+        try {
+            const { data, error } = await supabase
+                .from(tableName)
+                .select(employeeSelectFields)
+                .order('id', { ascending: true });
+
+            if (error) {
+                throw error;
+            }
+
+            const rows = (data as unknown as EmployeeRow[]) || [];
+            return rows.map(toAppEmployee);
+        } catch (error) {
+            const message = getErrorMessage(error);
+            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
+                throw new Error('ไม่สามารถเชื่อมต่อฐานข้อมูลพนักงานได้');
+            }
+            throw new Error(message || 'ไม่สามารถโหลดรายชื่อพนักงานได้');
+        }
+    },
+
+    async upsertEmployee(employee: AppEmployee, previousId = employee.id): Promise<void> {
+        const payload = toPayload(employee);
+        const normalizedNextId = normalizeEmployeeId(employee.id);
+        const normalizedPreviousId = normalizeEmployeeId(previousId);
+
+        try {
+            const { error } = await supabase.from(tableName).upsert(payload);
+            if (error) {
+                await retryUpsertWithLegacyPayload(payload, error.message);
+            }
+
+            if (normalizedPreviousId && normalizedPreviousId !== normalizedNextId) {
+                await renameEmployeeRelations(normalizedPreviousId, normalizedNextId);
+
+                const { error: deleteError } = await supabase
+                    .from(tableName)
+                    .delete()
+                    .eq('id', normalizedPreviousId);
+
+                if (deleteError) {
+                    throw deleteError;
+                }
+            }
+        } catch (error) {
+            const message = getErrorMessage(error);
+            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
+                throw new Error('ไม่สามารถบันทึกข้อมูลพนักงานได้ กรุณาตรวจสอบการเชื่อมต่อ');
+            }
+            throw new Error(message || 'ไม่สามารถบันทึกข้อมูลพนักงานได้');
+        }
     },
 
     async upsertEmployees(items: AppEmployee[]): Promise<void> {
@@ -256,12 +363,20 @@ export const appEmployeeService = {
         }
 
         const payloads = items.map(toPayload);
-        const { error } = await supabase.from(tableName).upsert(payloads);
-        if (!error) {
-            return;
-        }
+        try {
+            const { error } = await supabase.from(tableName).upsert(payloads);
+            if (!error) {
+                return;
+            }
 
-        await retryBulkUpsertWithLegacyPayload(payloads, error.message);
+            await retryBulkUpsertWithLegacyPayload(payloads, error.message);
+        } catch (error) {
+            const message = getErrorMessage(error);
+            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
+                throw new Error('ไม่สามารถบันทึกข้อมูลพนักงานได้ กรุณาตรวจสอบการเชื่อมต่อ');
+            }
+            throw new Error(message || 'ไม่สามารถบันทึกข้อมูลพนักงานได้');
+        }
     },
 
     async getEmployeeById(id: string): Promise<AppEmployee | null> {
@@ -273,7 +388,7 @@ export const appEmployeeService = {
         try {
             const { data, error } = await supabase
                 .from(tableName)
-                .select('*')
+                .select(employeeSelectFields)
                 .eq('id', normalized)
                 .maybeSingle();
 
@@ -285,7 +400,7 @@ export const appEmployeeService = {
                 return null;
             }
 
-            return toAppEmployee(data as EmployeeRow);
+            return toAppEmployee(data as unknown as EmployeeRow);
         } catch {
             const rows = await appEmployeeService.getEmployees();
             return rows.find((employee) => employee.id.trim().toUpperCase() === normalized) || null;
@@ -347,7 +462,7 @@ export const appEmployeeService = {
             .maybeSingle();
 
         if (error) {
-            throw new Error(error.message);
+            throw new Error(getErrorMessage(error));
         }
 
         if (!data) {
@@ -356,9 +471,9 @@ export const appEmployeeService = {
     },
 
     async deleteEmployee(id: string): Promise<void> {
-        const { error } = await supabase.from(tableName).delete().eq('id', id);
+        const { error } = await supabase.from(tableName).delete().eq('id', normalizeEmployeeId(id));
         if (error) {
-            throw new Error(error.message);
+            throw new Error(getErrorMessage(error));
         }
     },
 };

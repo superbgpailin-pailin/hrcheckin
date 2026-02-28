@@ -1,10 +1,9 @@
 ﻿import React, { useState } from 'react';
 import { useAppLanguage } from '../context/AppLanguageContext';
 import { useAppSettings } from '../context/AppSettingsContext';
-import type { EmployeeProfileDraft } from '../types/app';
+import type { AppEmployee, EmployeeProfileDraft } from '../types/app';
 import { appEmployeeService } from '../services/appEmployeeService';
 import { appFileUploadService } from '../services/appFileUploadService';
-import { appProfileRequestService } from '../services/appProfileRequestService';
 import { ImageLightbox } from '../components/ImageLightbox';
 
 interface AppSelfProfileProps {
@@ -18,13 +17,13 @@ type AccessStep = 'verify' | 'form';
 const TEXT = {
     th: {
         title: 'Employee Form',
-        subtitle: 'กรอกข้อมูลพนักงาน และส่งคำขอให้แอดมินตรวจสอบ',
+        subtitle: 'กรอกข้อมูลพนักงาน และบันทึกเข้าระบบได้ทันที',
         verifyHint: 'กรอกรหัสพนักงานและ PIN เดิมก่อนเริ่มกรอกข้อมูล (ถ้าจำ PIN ไม่ได้ให้ติดต่อแอดมิน)',
         back: 'กลับหน้าหลัก',
         verifySubmit: 'ยืนยันรหัส',
         verifying: 'กำลังตรวจสอบ...',
-        submit: 'ส่งคำขอ',
-        submitting: 'กำลังส่งคำขอ...',
+        submit: 'บันทึกข้อมูล',
+        submitting: 'กำลังบันทึกข้อมูล...',
         startOver: 'เปลี่ยนรหัสพนักงาน',
         verifySuccess: 'ยืนยันรหัสสำเร็จ กรุณากรอกข้อมูลให้ครบ',
         uploadErrorType: 'อัปโหลดได้เฉพาะไฟล์รูปภาพเท่านั้น',
@@ -32,8 +31,8 @@ const TEXT = {
         uploadFail: 'อัปโหลดรูปภาพไม่สำเร็จ',
         uploadProgress: 'กำลังอัปโหลดรูปภาพ...',
         uploadDone: 'อัปโหลดรูปภาพเรียบร้อย',
-        submitFail: 'ไม่สามารถส่งคำขอได้',
-        updateDone: 'ส่งคำขออัปเดตข้อมูลสำเร็จ กรุณารอแอดมินอนุมัติ',
+        submitFail: 'ไม่สามารถบันทึกข้อมูลได้',
+        updateDone: 'บันทึกข้อมูลพนักงานสำเร็จ',
         employeeIdRequired: 'กรุณากรอกรหัสพนักงาน',
         currentPinRequired: 'กรุณากรอก PIN เดิม',
         newPinRequired: 'PIN ใหม่ต้องมีอย่างน้อย 4 หลัก',
@@ -70,13 +69,13 @@ const TEXT = {
     },
     km: {
         title: 'Employee Form',
-        subtitle: 'Complete your profile and submit for admin review',
+        subtitle: 'Complete your profile and save directly to the system',
         verifyHint: 'Enter your employee code and current PIN before filling the form. If you forgot PIN, contact admin.',
         back: 'Back',
         verifySubmit: 'Verify',
         verifying: 'Verifying...',
-        submit: 'Submit Request',
-        submitting: 'Submitting...',
+        submit: 'Save Profile',
+        submitting: 'Saving...',
         startOver: 'Change Employee Code',
         verifySuccess: 'Verification successful. Please complete the form.',
         uploadErrorType: 'Only image files are allowed',
@@ -84,8 +83,8 @@ const TEXT = {
         uploadFail: 'Image upload failed',
         uploadProgress: 'Uploading image...',
         uploadDone: 'Image uploaded',
-        submitFail: 'Unable to submit request',
-        updateDone: 'Update request submitted. Please wait for admin approval.',
+        submitFail: 'Unable to save profile',
+        updateDone: 'Employee profile saved successfully.',
         employeeIdRequired: 'Please enter employee code',
         currentPinRequired: 'Please enter current PIN',
         newPinRequired: 'New PIN must be at least 4 digits',
@@ -152,6 +151,37 @@ const cleanLegacyValue = (value: string): string => {
     return value;
 };
 
+const buildProfileEmployee = (
+    existingEmployee: AppEmployee,
+    draft: EmployeeProfileDraft,
+): AppEmployee => {
+    const fallbackPhoto = existingEmployee.photoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(draft.employeeId)}&background=334155&color=fff`;
+
+    return {
+        ...existingEmployee,
+        id: draft.employeeId.trim().toUpperCase(),
+        firstNameTH: draft.firstNameTH.trim(),
+        lastNameTH: draft.lastNameTH.trim(),
+        firstNameEN: draft.firstNameEN.trim(),
+        lastNameEN: draft.lastNameEN.trim(),
+        nickname: draft.nickname.trim(),
+        position: draft.position.trim(),
+        department: draft.department.trim(),
+        photoUrl: draft.selfieUrl || existingEmployee.photoUrl || fallbackPhoto,
+        pin: draft.pin.replace(/\D/g, '').slice(0, 6),
+        email: draft.email.trim(),
+        phoneNumber: draft.phoneNumber.trim(),
+        birthDate: draft.birthDate,
+        emergencyContactName: draft.emergencyContactName.trim(),
+        emergencyContactPhone: draft.emergencyContactPhone.trim(),
+        selfieUrl: draft.selfieUrl,
+        idCardUrl: draft.idCardUrl,
+        passportUrl: draft.passportUrl,
+        startDate: draft.startDate,
+        defaultShiftId: undefined,
+    };
+};
+
 export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
     const { language, toggleLanguage } = useAppLanguage();
     const { config } = useAppSettings();
@@ -162,6 +192,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
     const [currentPin, setCurrentPin] = useState('');
     const [newPin, setNewPin] = useState('');
     const [confirmNewPin, setConfirmNewPin] = useState('');
+    const [verifiedEmployee, setVerifiedEmployee] = useState<AppEmployee | null>(null);
 
     const [draft, setDraft] = useState<EmployeeProfileDraft>(createDraft);
     const [submitting, setSubmitting] = useState(false);
@@ -218,6 +249,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
         setCurrentPin('');
         setNewPin('');
         setConfirmNewPin('');
+        setVerifiedEmployee(null);
         setDraft(createDraft());
         setPreviewImage(null);
     };
@@ -323,6 +355,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
             setCurrentPin(effectivePin);
             setNewPin('');
             setConfirmNewPin('');
+            setVerifiedEmployee(existingEmployee);
             setDraft({
                 ...createDraft(),
                 employeeId: normalizedEmployeeId,
@@ -358,11 +391,17 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
         setError('');
         setNotice('');
         try {
-            await appProfileRequestService.submitRequest({
+            const existingEmployee = verifiedEmployee || await appEmployeeService.getEmployeeById(employeeCode);
+            if (!existingEmployee) {
+                throw new Error(t.employeeNotFound);
+            }
+
+            const employee = buildProfileEmployee(existingEmployee, {
                 ...draft,
                 employeeId: employeeCode,
                 pin: draft.pin,
             });
+            await appEmployeeService.upsertEmployee(employee, employeeCode);
             setNotice(t.updateDone);
             resetToVerifyStep();
         } catch (submitError) {

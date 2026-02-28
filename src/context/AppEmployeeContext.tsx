@@ -1,5 +1,5 @@
 ﻿/* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppEmployee } from '../types/app';
 import { appEmployeeService } from '../services/appEmployeeService';
 
@@ -8,7 +8,7 @@ interface AppEmployeeContextValue {
     loading: boolean;
     error: string | null;
     refreshEmployees: () => Promise<void>;
-    saveEmployee: (employee: AppEmployee) => Promise<void>;
+    saveEmployee: (employee: AppEmployee, previousId?: string) => Promise<void>;
     saveEmployees: (items: AppEmployee[]) => Promise<void>;
     deleteEmployee: (employeeId: string) => Promise<void>;
 }
@@ -139,6 +139,11 @@ export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ childr
     const [employees, setEmployees] = useState<AppEmployee[]>(initialEmployees);
     const [loading, setLoading] = useState(() => enabled && initialEmployees.length === 0);
     const [error, setError] = useState<string | null>(null);
+    const employeesRef = useRef<AppEmployee[]>(initialEmployees);
+
+    useEffect(() => {
+        employeesRef.current = employees;
+    }, [employees]);
 
     const loadEmployees = useCallback(async (silent = false) => {
         if (!silent) {
@@ -150,7 +155,8 @@ export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ childr
             setEmployees(result);
             persistEmployees(result);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'ไม่สามารถโหลดรายชื่อพนักงานได้');
+            const hasFallbackData = employeesRef.current.length > 0;
+            setError(hasFallbackData ? null : (err instanceof Error ? err.message : 'ไม่สามารถโหลดรายชื่อพนักงานได้'));
         } finally {
             setLoading(false);
         }
@@ -175,10 +181,11 @@ export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ childr
         void loadEmployees(hasCachedEmployees);
     }, [enabled, loadEmployees]);
 
-    const saveEmployee = useCallback(async (employee: AppEmployee) => {
-        await appEmployeeService.upsertEmployee(employee);
+    const saveEmployee = useCallback(async (employee: AppEmployee, previousId = employee.id) => {
+        await appEmployeeService.upsertEmployee(employee, previousId);
         setEmployees((current) => {
-            const next = mergeEmployees(current, [employee]);
+            const filtered = current.filter((item) => item.id !== previousId || previousId === employee.id);
+            const next = mergeEmployees(filtered, [employee]);
             persistEmployees(next);
             return next;
         });

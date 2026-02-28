@@ -201,12 +201,18 @@ const EmployeeEditor: React.FC<EmployeeEditorProps> = ({ employee, fieldOptions,
     const submit = async (event: React.FormEvent) => {
         event.preventDefault();
         setSaving(true);
-        await onSubmit({
-            ...draft,
-            photoUrl: draft.selfieUrl || draft.photoUrl,
-            defaultShiftId: undefined,
-        });
-        setSaving(false);
+        setError('');
+        try {
+            await onSubmit({
+                ...draft,
+                photoUrl: draft.selfieUrl || draft.photoUrl,
+                defaultShiftId: undefined,
+            });
+        } catch (submitError) {
+            setError(submitError instanceof Error ? submitError.message : 'บันทึกข้อมูลพนักงานไม่สำเร็จ');
+        } finally {
+            setSaving(false);
+        }
     };
 
     const renderImagePreview = (imageUrl: string, alt: string) => {
@@ -491,7 +497,7 @@ export const AppEmployees: React.FC = () => {
     const { config } = useAppSettings();
 
     const [query, setQuery] = useState('');
-    const [editorState, setEditorState] = useState<AppEmployee | null>(null);
+    const [editorState, setEditorState] = useState<{ originalId: string; employee: AppEmployee } | null>(null);
     const [viewerState, setViewerState] = useState<AppEmployee | null>(null);
     const [bulkCreateStart, setBulkCreateStart] = useState('');
     const [bulkCreateEnd, setBulkCreateEnd] = useState('');
@@ -599,7 +605,10 @@ export const AppEmployees: React.FC = () => {
                         <button
                             type="button"
                             className="btn-primary"
-                            onClick={() => setEditorState(createNewEmployee(getNextEmployeeId(employees), defaultStatus))}
+                            onClick={() => {
+                                const employee = createNewEmployee(getNextEmployeeId(employees), defaultStatus);
+                                setEditorState({ originalId: employee.id, employee });
+                            }}
                         >
                             เพิ่มพนักงาน
                         </button>
@@ -693,7 +702,7 @@ export const AppEmployees: React.FC = () => {
                                             <button
                                                 type="button"
                                                 className="btn-muted"
-                                                onClick={() => setEditorState(employee)}
+                                                onClick={() => setEditorState({ originalId: employee.id, employee })}
                                             >
                                                 แก้ไข
                                             </button>
@@ -720,11 +729,28 @@ export const AppEmployees: React.FC = () => {
 
             {editorState ? (
                 <EmployeeEditor
-                    employee={editorState}
+                    employee={editorState.employee}
                     fieldOptions={employeeFieldOptions}
                     onCancel={() => setEditorState(null)}
                     onSubmit={async (employee) => {
-                        await saveEmployee(employee);
+                        const normalizedNextId = employee.id.trim().toUpperCase();
+                        const normalizedOriginalId = editorState.originalId.trim().toUpperCase();
+                        const duplicateExists = employees.some((item) => {
+                            const currentId = item.id.trim().toUpperCase();
+                            return currentId === normalizedNextId && currentId !== normalizedOriginalId;
+                        });
+
+                        if (duplicateExists) {
+                            throw new Error(`รหัสพนักงาน ${normalizedNextId} ถูกใช้งานแล้ว`);
+                        }
+
+                        await saveEmployee(
+                            {
+                                ...employee,
+                                id: normalizedNextId,
+                            },
+                            normalizedOriginalId,
+                        );
                         setEditorState(null);
                     }}
                 />
