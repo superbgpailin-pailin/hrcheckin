@@ -15,7 +15,8 @@ interface AppEmployeeContextValue {
 
 const AppEmployeeContext = createContext<AppEmployeeContextValue | undefined>(undefined);
 
-const EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v1';
+const LEGACY_EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v1';
+const EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v2';
 
 const sortEmployeesById = (items: AppEmployee[]): AppEmployee[] => {
     return [...items].sort((a, b) => a.id.localeCompare(b.id));
@@ -77,6 +78,10 @@ export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ childr
     const refreshEmployees = useCallback(async () => {
         await loadEmployees(false);
     }, [loadEmployees]);
+
+    useEffect(() => {
+        localStorage.removeItem(LEGACY_EMPLOYEES_CACHE_KEY);
+    }, []);
 
     useEffect(() => {
         if (!enabled) {
