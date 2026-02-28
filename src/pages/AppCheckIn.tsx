@@ -53,6 +53,7 @@ const TEXT = {
         scanToCheckIn: 'รอสแกน QR เพื่อเช็คอิน',
         confirming: 'กำลังบันทึก...',
         success: 'บันทึกสำเร็จ',
+        selfieUploadSkipped: 'เช็คอินสำเร็จ แต่รูปยืนยันอัปโหลดไม่สำเร็จในรอบนี้',
         checkInAt: 'เวลาเข้า',
         estimatedOut: 'เวลาสิ้นสุดกะ (ประมาณ)',
         status: 'สถานะ',
@@ -92,6 +93,7 @@ const TEXT = {
         scanToCheckIn: 'រង់ចាំស្កេន QR ដើម្បីចុះវត្តមាន',
         confirming: 'កំពុងរក្សាទុក...',
         success: 'បានរក្សាទុករួចរាល់',
+        selfieUploadSkipped: 'Check-in saved, but selfie upload failed for this record.',
         checkInAt: 'ម៉ោងចូល',
         estimatedOut: 'ពេលបញ្ចប់វេន (ប្រហែល)',
         status: 'ស្ថានភាព',
@@ -116,6 +118,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
     const [selectedShiftId, setSelectedShiftId] = useState<string>('');
     const [result, setResult] = useState<AttendanceSummaryRecord | null>(null);
     const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
     const [scannerOpen, setScannerOpen] = useState(false);
     const [capturedSelfie, setCapturedSelfie] = useState('');
     const [authenticating, setAuthenticating] = useState(false);
@@ -148,6 +151,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
     const submitIdentity = async (event: React.FormEvent) => {
         event.preventDefault();
         setError('');
+        setNotice('');
         setAuthenticating(true);
 
         try {
@@ -189,9 +193,16 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
             throw new Error(t.selfieRequired);
         }
 
+        setNotice('');
         const filename = `${employeeTarget.id}-${Date.now()}.jpg`;
         const selfieFile = await dataUrlToFile(capturedSelfie, filename);
-        const selfieUrl = await appFileUploadService.uploadCheckInSelfie(selfieFile, employeeTarget.id);
+        let selfieUrl = '';
+        let uploadSkipped = false;
+        try {
+            selfieUrl = await appFileUploadService.uploadCheckInSelfie(selfieFile, employeeTarget.id);
+        } catch {
+            uploadSkipped = true;
+        }
         const record = await appAttendanceService.recordCheckIn(
             employeeTarget,
             shiftTarget,
@@ -204,7 +215,8 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         setResult(record);
         setStep('done');
         setError('');
-    }, [capturedSelfie, config.lateGraceMinutes, t.selfieRequired]);
+        setNotice(uploadSkipped ? t.selfieUploadSkipped : '');
+    }, [capturedSelfie, config.lateGraceMinutes, t.selfieRequired, t.selfieUploadSkipped]);
 
     const handleQrPayload = useCallback(async (raw: string): Promise<void> => {
         if (!employee || !selectedShift) {
@@ -295,6 +307,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         setPin('');
         setResult(null);
         setError('');
+        setNotice('');
         setScannerOpen(false);
         setCapturedSelfie('');
         setAuthenticating(false);
@@ -504,6 +517,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                         <p>{t.estimatedOut}: {formatThaiDateTime(result.estimatedCheckOutAt)}</p>
                         <p>{t.status}: {result.status}{result.lateMinutes > 0 ? ` (${result.lateMinutes} min)` : ''}</p>
                         <p>{t.shift}: {result.shiftLabel}</p>
+                        {notice ? <p className="panel-muted">{notice}</p> : null}
 
                         <div className="inline-actions">
                             <button className="btn-muted" type="button" onClick={onBack}>{t.home}</button>
@@ -513,6 +527,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                 ) : null}
 
                 {error ? <div className="form-error">{error}</div> : null}
+                {!error && notice && step !== 'done' ? <div className="panel-muted">{notice}</div> : null}
             </div>
         </div>
     );
