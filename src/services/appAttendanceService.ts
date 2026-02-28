@@ -9,16 +9,11 @@ const attendanceSelectColumns = [
     'employee_id',
     'user_id',
     'timestamp',
-    'check_in_time',
     'created_at',
     'status',
     'shift_name',
-    'shift',
     'site_id',
-    'site',
-    'kiosk_id',
     'type',
-    'attendance_type',
     'photo_url',
 ];
 const duplicateCheckInMessage = 'วันนี้เช็คอินแล้ว';
@@ -88,7 +83,7 @@ const optionalInsertColumns = [
 
 const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v1';
 const ATTENDANCE_CACHE_TTL_MS = 30 * 1000;
-const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v1';
+const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v2';
 let resolvedAttendanceSelectColumns = [...attendanceSelectColumns];
 
 const attendanceCacheKey = (filters: AttendanceFilters): string => {
@@ -446,7 +441,7 @@ const extractMissingColumn = (message: string): string | null => {
         return match[1];
     }
 
-    const fallback = message.toLowerCase().match(/column ['"`]?([a-z0-9_]+)['"`]?/);
+    const fallback = message.toLowerCase().match(/column\s+(?:[a-z0-9_]+\.)?['"`]?([a-z0-9_]+)['"`]?/);
     return fallback?.[1] || null;
 };
 
