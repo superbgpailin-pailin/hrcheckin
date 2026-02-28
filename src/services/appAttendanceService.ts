@@ -184,6 +184,23 @@ const asText = (value: unknown): string => {
     return '';
 };
 
+const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    if (
+        typeof error === 'object'
+        && error !== null
+        && 'message' in error
+        && typeof (error as { message?: unknown }).message === 'string'
+    ) {
+        return (error as { message: string }).message;
+    }
+
+    return String(error || '');
+};
+
 const toIsoString = (value: unknown): string => {
     const raw = asText(value);
     if (!raw) {
@@ -392,7 +409,7 @@ const loadRowsFromSupabase = async (
             writeAttendanceSelectColumnsCache(selectColumns);
             break;
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error || '');
+            const message = getErrorMessage(error);
             const selectFallback = removeMissingSelectColumn(selectColumns, message);
 
             if (selectFallback.removedAny && selectFallback.nextColumns.length > 0) {
@@ -533,7 +550,7 @@ export const appAttendanceService = {
         try {
             await insertWithLegacyPayloadFallback(payload);
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error || '');
+            const message = getErrorMessage(error);
             if (message === duplicateCheckInMessage || isDuplicateInsertError(message)) {
                 throw new Error(duplicateCheckInMessage);
             }
@@ -563,8 +580,12 @@ export const appAttendanceService = {
         filters: AttendanceFilters = {},
     ): Promise<AttendanceSummaryRecord[]> {
         const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
-        const remoteRows = await loadRowsFromSupabase(filters);
-        return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
+        try {
+            const remoteRows = await loadRowsFromSupabase(filters);
+            return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
+        } catch (error) {
+            throw new Error(getErrorMessage(error) || saveFailedMessage);
+        }
     },
 
     async deleteCheckIn(recordId: string): Promise<void> {
