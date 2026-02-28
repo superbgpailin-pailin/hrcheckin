@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabaseClient';
 import { DEFAULT_SHIFTS } from '../data/appDefaults';
 import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../types/app';
 import { dayKey, estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils';
+import { getErrorMessage, isTransportError, withReadRetry } from '../utils/supabaseUtils';
 
 const tableName = 'attendance';
 const attendanceSelectColumns = [
@@ -16,11 +17,10 @@ const attendanceSelectColumns = [
     'type',
     'photo_url',
 ];
-const duplicateCheckInMessage = '\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49\u0e40\u0e0a\u0e47\u0e04\u0e2d\u0e34\u0e19\u0e41\u0e25\u0e49\u0e27';
+const duplicateCheckInMessage = 'วันนี้เช็คอินแล้ว';
 const saveFailedMessage = 'Check-in could not be saved on the server. Please try again or contact admin.';
 const readFailedMessage = 'Database server is slow or unavailable. Please try again.';
-const READ_TIMEOUT_MS = 8000;
-const READ_RETRY_COUNT = 1;
+
 
 
 interface AttendanceRow {
@@ -183,60 +183,6 @@ const asText = (value: unknown): string => {
     return '';
 };
 
-const getErrorMessage = (error: unknown): string => {
-    if (error instanceof Error) {
-        return error.message;
-    }
-
-    if (
-        typeof error === 'object'
-        && error !== null
-        && 'message' in error
-        && typeof (error as { message?: unknown }).message === 'string'
-    ) {
-        return (error as { message: string }).message;
-    }
-
-    return String(error || '');
-};
-
-const isTransportError = (message: string): boolean => {
-    const normalized = message.trim().toLowerCase();
-    return normalized === 'failed to fetch'
-        || normalized.includes('fetch')
-        || normalized.includes('timeout')
-        || normalized.includes('connection timed out')
-        || normalized.includes('connection terminated')
-        || normalized.includes('status 522')
-        || normalized.includes('error code 522');
-};
-
-const withReadRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
-    let lastError: unknown = null;
-
-    for (let attempt = 0; attempt <= READ_RETRY_COUNT; attempt += 1) {
-        try {
-            return await Promise.race<T>([
-                operation(),
-                new Promise<T>((_, reject) => {
-                    globalThis.setTimeout(() => reject(new Error(readFailedMessage)), READ_TIMEOUT_MS);
-                }),
-            ]);
-        } catch (error) {
-            lastError = error;
-            const message = getErrorMessage(error);
-            if (!isTransportError(message) || attempt >= READ_RETRY_COUNT) {
-                throw error;
-            }
-
-            await new Promise<void>((resolve) => {
-                globalThis.setTimeout(resolve, 350 * (attempt + 1));
-            });
-        }
-    }
-
-    throw lastError instanceof Error ? lastError : new Error(readFailedMessage);
-};
 
 const toIsoString = (value: unknown): string => {
     const raw = asText(value);
@@ -420,6 +366,11 @@ const loadRowsFromSupabase = async (
             query = query.eq('employee_id', filters.employeeId);
         }
 
+        // Filter check_in only at the database level to reduce bandwidth
+        if (selectColumns.includes('type')) {
+            query = query.neq('type', 'check_out');
+        }
+
         if (withTimestampFilter && filters.from) {
             query = query.gte('timestamp', `${filters.from}T00:00:00`);
         }
@@ -468,6 +419,7 @@ const loadRowsFromSupabase = async (
     const normalizedRows = rows
         .map(normalizeAttendanceRow)
         .filter((row) => row.employee_id)
+        // check_out rows are filtered at DB level; this is a safety net for legacy data
         .filter((row) => row.type !== 'check_out')
         .filter((row) => withinFilters(row, filters))
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());

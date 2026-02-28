@@ -70,8 +70,17 @@ interface PortalAccountRow {
     active: boolean | null;
 }
 
+// Cached shape — no password stored to localStorage
+interface CachedPortalAccount {
+    username: string;
+    displayName: string;
+    role: 'Master' | 'Admin';
+    photoUrl: string;
+    active: boolean;
+}
+
 const STORAGE_KEY_CURRENT_USER = 'hrcheckin_portal_user_v3';
-const STORAGE_KEY_ACCOUNTS = 'hrcheckin_portal_accounts_v3';
+const STORAGE_KEY_ACCOUNTS = 'hrcheckin_portal_accounts_v4'; // bumped — old v3 had passwords
 const ACCOUNTS_TABLE = 'portal_admin_accounts';
 
 let accountsTableUnavailable = false;
@@ -131,8 +140,21 @@ const ensureMasterAccount = (accounts: PortalAccount[]): PortalAccount[] => {
     return [masterAccount, ...withoutMaster];
 };
 
+// --- localStorage: store only non-sensitive cached accounts (no password) ---
+
+const toCached = (account: PortalAccount): CachedPortalAccount => ({
+    username: account.username,
+    displayName: account.displayName,
+    role: account.role as 'Master' | 'Admin',
+    photoUrl: account.photoUrl,
+    active: account.active,
+});
+
 const readStoredAccounts = (): PortalAccount[] => {
     try {
+        // Also clear the old v3 key that stored passwords
+        localStorage.removeItem('hrcheckin_portal_accounts_v3');
+
         const raw = localStorage.getItem(STORAGE_KEY_ACCOUNTS);
         if (!raw) {
             return [MASTER_ACCOUNT];
@@ -153,10 +175,9 @@ const readStoredAccounts = (): PortalAccount[] => {
                 const displayName = String((item as { displayName?: unknown }).displayName || '');
                 const role = String((item as { role?: unknown }).role || 'Admin');
                 const photoUrl = String((item as { photoUrl?: unknown }).photoUrl || '');
-                const password = String((item as { password?: unknown }).password || '');
                 const active = Boolean((item as { active?: unknown }).active ?? true);
 
-                if (!username || !password) {
+                if (!username) {
                     return null;
                 }
 
@@ -164,12 +185,13 @@ const readStoredAccounts = (): PortalAccount[] => {
                     return null;
                 }
 
+                // Password not stored in cache; will be fetched from remote on login
                 return {
                     username,
                     displayName: displayName || username.toUpperCase(),
-                    role,
+                    role: role as 'Master' | 'Admin',
                     photoUrl: photoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=1e3a8a&color=fff`,
-                    password,
+                    password: '',
                     active,
                 };
             })
@@ -182,8 +204,11 @@ const readStoredAccounts = (): PortalAccount[] => {
 };
 
 const persistAccounts = (accounts: PortalAccount[]): void => {
-    localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(ensureMasterAccount(accounts)));
+    // Only cache non-sensitive fields — passwords are NOT stored
+    const safeAccounts = ensureMasterAccount(accounts).map(toCached);
+    localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(safeAccounts));
 };
+
 
 const fromRow = (row: PortalAccountRow): PortalAccount | null => {
     const username = normalizeUsername(row.username);
@@ -331,9 +356,10 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             let remoteAccounts = dedupeAccounts(await fetchRemoteAccounts());
 
             const remoteUsernames = new Set(remoteAccounts.map((account) => normalizeUsername(account.username)));
+            // Only push local accounts that have a real password (i.e. created locally before remote sync)
             const missingFromRemote = localAccounts.filter((account) => {
                 const normalized = normalizeUsername(account.username);
-                return normalized !== 'master' && !remoteUsernames.has(normalized);
+                return normalized !== 'master' && !remoteUsernames.has(normalized) && account.password !== '';
             });
 
             if (missingFromRemote.length > 0) {
@@ -348,7 +374,14 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             }
 
             // Remote is the source of truth for passwords and admin account state.
-            const merged = dedupeAccounts([...localAccounts, ...remoteAccounts]);
+            // Merge: remote wins on password, local wins on display data until remote is fetched.
+            const remoteMap = new Map(remoteAccounts.map((a) => [normalizeUsername(a.username), a]));
+            const merged = dedupeAccounts(
+                localAccounts.map((local) => {
+                    const remote = remoteMap.get(normalizeUsername(local.username));
+                    return remote ? { ...local, ...remote } : local;
+                }),
+            );
             setAccounts(merged);
             persistAccounts(merged);
         } catch (error) {
@@ -506,30 +539,30 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
 
     const updatePortalAdmin = useCallback(async (input: UpdatePortalAdminInput): Promise<UpdatePortalAdminResult> => {
         if (!portalUser || portalUser.role !== 'Master') {
-            return { success: false, message: 'Only master can edit admin accounts.' };
+            return { success: false, message: 'เฉพาะ Master เท่านั้นที่แก้ไขบัญชีแอดมินได้' };
         }
 
         const username = normalizeUsername(input.username);
         if (!username) {
-            return { success: false, message: 'Username is required.' };
+            return { success: false, message: 'กรุณาระบุ Username' };
         }
         if (username === 'master') {
-            return { success: false, message: 'Master account cannot be edited here.' };
+            return { success: false, message: 'ไม่สามารถแก้ไขบัญชี Master ได้ที่นี่' };
         }
 
         const target = accounts.find((account) => normalizeUsername(account.username) === username);
         if (!target) {
-            return { success: false, message: 'Admin account not found.' };
+            return { success: false, message: 'ไม่พบบัญชีแอดมินที่ต้องการแก้ไข' };
         }
 
         const displayName = input.displayName.trim();
         if (!displayName) {
-            return { success: false, message: 'Display name is required.' };
+            return { success: false, message: 'กรุณากรอกชื่อที่แสดง' };
         }
 
         const nextPassword = (input.password || '').trim();
         if (nextPassword && nextPassword.length < 6) {
-            return { success: false, message: 'Password must be at least 6 characters.' };
+            return { success: false, message: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' };
         }
 
         const nextPhotoUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=1d4ed8&color=fff`;
@@ -544,14 +577,14 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
                 }
                 const updatedRows = await updateRemoteAccount(username, remotePayload);
                 if (updatedRows < 1) {
-                    return { success: false, message: 'No account row was updated on server.' };
+                    return { success: false, message: 'ไม่พบแถวที่ต้องการอัพเดทบนเซิร์ฟเวอร์' };
                 }
             } catch (error) {
                 const message = getErrorMessage(error);
                 if (isSchemaMissingError(message)) {
                     accountsTableUnavailable = true;
                 } else if (message.toLowerCase().includes('duplicate key')) {
-                    return { success: false, message: 'Server rejected update (duplicate key).' };
+                    return { success: false, message: 'เซิร์ฟเวอร์ปฏิเสธการอัพเดท (key ซ้ำ)' };
                 } else {
                     return { success: false, message };
                 }
@@ -574,23 +607,23 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         setAccounts(deduped);
         persistAccounts(deduped);
         await reloadAccounts();
-        return { success: true, message: 'Admin updated successfully.' };
+        return { success: true, message: 'แก้ไขข้อมูลแอดมินเรียบร้อยแล้ว' };
     }, [accounts, portalUser, reloadAccounts]);
 
     const deletePortalAdmin = useCallback(async (usernameInput: string): Promise<DeletePortalAdminResult> => {
         if (!portalUser || portalUser.role !== 'Master') {
-            return { success: false, message: 'Only master can delete admin accounts.' };
+            return { success: false, message: 'เฉพาะ Master เท่านั้นที่ลบบัญชีแอดมินได้' };
         }
 
         const username = normalizeUsername(usernameInput);
         if (!username) {
-            return { success: false, message: 'Username is required.' };
+            return { success: false, message: 'กรุณาระบุ Username' };
         }
         if (username === 'master') {
-            return { success: false, message: 'Master account cannot be deleted.' };
+            return { success: false, message: 'ไม่สามารถลบบัญชี Master ได้' };
         }
         if (normalizeUsername(portalUser.username) === username) {
-            return { success: false, message: 'Cannot delete the current signed-in account.' };
+            return { success: false, message: 'ไม่สามารถลบบัญชีที่กำลังใช้งานอยู่ได้' };
         }
 
         const target = accounts.find((account) => normalizeUsername(account.username) === username);
@@ -615,7 +648,7 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         const deduped = dedupeAccounts(next);
         setAccounts(deduped);
         persistAccounts(deduped);
-        return { success: true, message: 'Admin deleted successfully.' };
+        return { success: true, message: 'ลบบัญชีแอดมินเรียบร้อยแล้ว' };
     }, [accounts, portalUser]);
 
     const changeOwnPassword = useCallback(async (input: ChangeOwnPasswordInput): Promise<ChangeOwnPasswordResult> => {

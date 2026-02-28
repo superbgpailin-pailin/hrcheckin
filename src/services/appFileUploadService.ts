@@ -10,26 +10,23 @@ const extensionFromMime = (mime: string): string => {
 };
 
 const uploadToStorage = async (path: string, file: File): Promise<string> => {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-        const { error: uploadError } = await supabase
-            .storage
-            .from(bucket)
-            .upload(path, file, { upsert: false, contentType: file.type || 'image/webp' });
+    const { error: uploadError } = await supabase
+        .storage
+        .from(bucket)
+        .upload(path, file, { upsert: true, contentType: file.type || 'image/webp' });
 
-        if (!uploadError) {
-            const publicUrlResult = supabase.storage.from(bucket).getPublicUrl(path);
-            const publicUrl = publicUrlResult.data.publicUrl;
-            if (publicUrl) {
-                return publicUrl;
-            }
-        }
-
-        if (attempt === 1) {
-            throw new Error(UPLOAD_FAILED_MESSAGE);
-        }
+    if (uploadError) {
+        console.error('[uploadToStorage] Supabase storage error:', uploadError.message, { path, bucket });
+        throw new Error(`${UPLOAD_FAILED_MESSAGE} (${uploadError.message})`);
     }
 
-    throw new Error(UPLOAD_FAILED_MESSAGE);
+    const publicUrlResult = supabase.storage.from(bucket).getPublicUrl(path);
+    const publicUrl = publicUrlResult.data.publicUrl;
+    if (!publicUrl) {
+        throw new Error(UPLOAD_FAILED_MESSAGE);
+    }
+
+    return publicUrl;
 };
 
 export const appFileUploadService = {

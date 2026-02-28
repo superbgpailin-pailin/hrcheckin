@@ -7,6 +7,7 @@ import type {
     EmployeeProfileRequestType,
 } from '../types/app';
 import { appEmployeeService } from './appEmployeeService';
+import { getErrorMessage, isSchemaMissingError } from '../utils/supabaseUtils';
 
 interface ProfileRequestRow {
     id: string;
@@ -166,10 +167,8 @@ const validateDraft = (draft: EmployeeProfileDraft): void => {
     }
 };
 
-const isMissingTableError = (errorMessage: string): boolean => {
-    const message = errorMessage.toLowerCase();
-    return message.includes('could not find the table') || message.includes('schema cache') || message.includes('does not exist');
-};
+// isMissingTableError is now isSchemaMissingError from supabaseUtils
+const isMissingTableError = isSchemaMissingError;
 
 const markProfileRequestTableUnavailable = (errorMessage: string): boolean => {
     if (!isMissingTableError(errorMessage)) {
@@ -179,17 +178,6 @@ const markProfileRequestTableUnavailable = (errorMessage: string): boolean => {
     return true;
 };
 
-const getErrorMessage = (error: unknown): string => {
-    if (error instanceof Error) {
-        return error.message;
-    }
-
-    if (typeof error === 'object' && error && 'message' in error) {
-        return String((error as { message?: unknown }).message || '');
-    }
-
-    return String(error || '');
-};
 
 const readLocalRequests = (): EmployeeProfileRequest[] => {
     try {

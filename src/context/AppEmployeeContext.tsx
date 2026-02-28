@@ -177,9 +177,8 @@ export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ childr
             return;
         }
 
-        const hasCachedEmployees = readStoredEmployees().length > 0;
-        void loadEmployees(hasCachedEmployees);
-    }, [enabled, loadEmployees]);
+        void loadEmployees(initialEmployees.length > 0);
+    }, [enabled, initialEmployees.length, loadEmployees]);
 
     const saveEmployee = useCallback(async (employee: AppEmployee, previousId = employee.id) => {
         await appEmployeeService.upsertEmployee(employee, previousId);

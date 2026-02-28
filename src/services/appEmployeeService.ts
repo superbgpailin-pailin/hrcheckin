@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import type { AppEmployee } from '../types/app';
+import { getErrorMessage, isTransportError, withReadRetry } from '../utils/supabaseUtils';
 
 interface EmployeeRow {
     id: string;
@@ -29,8 +30,6 @@ interface EmployeeRow {
 type EmployeePayload = Record<string, string | null>;
 
 const tableName = 'employees';
-const READ_TIMEOUT_MS = 8000;
-const READ_RETRY_COUNT = 1;
 const BACKEND_UNAVAILABLE_MESSAGE = 'เซิร์ฟเวอร์ฐานข้อมูลตอบช้าหรือไม่พร้อมใช้งาน กรุณาลองใหม่';
 const employeeSelectFields = [
     'id',
@@ -70,65 +69,6 @@ const employeeCacheKeys = [
 const sanitizePin = (value: string): string => value.replace(/\D/g, '').slice(0, 6);
 const normalizeEmployeeId = (value: string): string => value.trim().toUpperCase();
 
-const getErrorMessage = (error: unknown): string => {
-    if (error instanceof Error) {
-        return error.message;
-    }
-
-    if (
-        typeof error === 'object'
-        && error !== null
-        && 'message' in error
-        && typeof (error as { message?: unknown }).message === 'string'
-    ) {
-        return (error as { message: string }).message;
-    }
-
-    return String(error || '');
-};
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
-    globalThis.setTimeout(resolve, ms);
-});
-
-const isTransportError = (message: string): boolean => {
-    const normalized = message.trim().toLowerCase();
-    return normalized === 'failed to fetch'
-        || normalized.includes('fetch')
-        || normalized.includes('timeout')
-        || normalized.includes('connection timed out')
-        || normalized.includes('connection terminated')
-        || normalized.includes('status 522')
-        || normalized.includes('error code 522');
-};
-
-const createTimeoutError = (): Error => new Error(BACKEND_UNAVAILABLE_MESSAGE);
-
-const withReadRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
-    let lastError: unknown = null;
-
-    for (let attempt = 0; attempt <= READ_RETRY_COUNT; attempt += 1) {
-        try {
-            return await Promise.race<T>([
-                operation(),
-                new Promise<T>((_, reject) => {
-                    globalThis.setTimeout(() => reject(createTimeoutError()), READ_TIMEOUT_MS);
-                }),
-            ]);
-        } catch (error) {
-            lastError = error;
-            const message = getErrorMessage(error);
-            if (!isTransportError(message) || attempt >= READ_RETRY_COUNT) {
-                throw error;
-            }
-
-            await sleep(350 * (attempt + 1));
-        }
-    }
-
-    throw lastError instanceof Error ? lastError : createTimeoutError();
-};
-
 const buildEmployeeAvatar = (employeeId: string): string => {
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(employeeId)}&background=334155&color=fff`;
 };
@@ -164,7 +104,7 @@ const readCachedEmployees = (): AppEmployee[] => {
                     department: String(employee.department || '-'),
                     status: normalizeEmployeeStatus(typeof employee.status === 'string' ? employee.status : 'Active'),
                     photoUrl: String(employee.photoUrl || buildEmployeeAvatar(employee.id)),
-                    pin: String(employee.pin || '123456'),
+                    pin: String(employee.pin || '111111'),
                     email: String(employee.email || ''),
                     phoneNumber: String(employee.phoneNumber || ''),
                     birthDate: String(employee.birthDate || ''),
@@ -247,7 +187,7 @@ const toAppEmployee = (row: EmployeeRow): AppEmployee => {
         department: row.department || '-',
         status: normalizeEmployeeStatus(row.status),
         photoUrl: row.photo_url || fallbackPhoto,
-        pin: row.pin || '123456',
+        pin: row.pin || '111111',
         email: row.email || '',
         phoneNumber: row.phone_number || '',
         birthDate: row.birth_date || '',
@@ -556,7 +496,7 @@ export const appEmployeeService = {
             throw new Error('ไม่พบรหัสพนักงานนี้ กรุณาติดต่อแอดมิน');
         }
 
-        const currentPin = sanitizePin(employee.pin || '123456');
+        const currentPin = sanitizePin(employee.pin || '111111');
         if (currentPin !== sanitizedPin) {
             throw new Error('PIN เดิมไม่ถูกต้อง หากจำ PIN ไม่ได้ให้ติดต่อแอดมิน');
         }

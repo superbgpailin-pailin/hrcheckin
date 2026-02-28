@@ -62,8 +62,7 @@ export const getAvailableShifts = (
     employeeRole: AppEmployee['role'],
     config: AppSystemConfig,
 ): ShiftDefinition[] => {
-    void atDate;
-    void employeeRole;
+    void atDate; // reserved for future date-based shift rules
 
     const seen = new Set<string>();
     return config.shifts.filter((shift) => {
@@ -71,6 +70,10 @@ export const getAvailableShifts = (
             return false;
         }
         seen.add(shift.id);
+        // supervisorOnly shifts are only available to Supervisor role
+        if (shift.supervisorOnly && employeeRole !== 'Supervisor') {
+            return false;
+        }
         return true;
     });
 };

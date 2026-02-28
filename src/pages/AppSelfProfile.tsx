@@ -38,6 +38,8 @@ const TEXT = {
         newPinRequired: 'PIN ใหม่ต้องมีอย่างน้อย 4 หลัก',
         pinMismatch: 'PIN ใหม่และยืนยัน PIN ใหม่ไม่ตรงกัน',
         employeeNotFound: 'ไม่พบรหัสพนักงานนี้ กรุณาติดต่อแอดมิน',
+        invalidEmail: 'รูปแบบอีเมลไม่ถูกต้อง',
+        invalidPhone: 'รูปแบบเบอร์โทรไม่ถูกต้อง (ตัวเลข 9-15 หลัก)',
         lockedAs: 'รหัสพนักงานที่ยืนยันแล้ว',
         forgotPinHint: 'หากจำ PIN เดิมไม่ได้ กรุณาให้แอดมินรีเซ็ต PIN ให้',
         labels: {
@@ -90,6 +92,8 @@ const TEXT = {
         newPinRequired: 'New PIN must be at least 4 digits',
         pinMismatch: 'New PIN and confirm PIN do not match',
         employeeNotFound: 'Employee code not found. Please contact admin.',
+        invalidEmail: 'Invalid email format',
+        invalidPhone: 'Invalid phone format (9-15 digits)',
         lockedAs: 'Verified employee code',
         forgotPinHint: 'If you forgot your PIN, ask admin to reset it.',
         labels: {
@@ -313,8 +317,6 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
     const verifyAndUnlock = async () => {
         const normalizedEmployeeId = employeeCode.trim().toUpperCase();
         const sanitizedCurrentPin = currentPin.replace(/\D/g, '').slice(0, 6);
-        const sanitizedNewPin = newPin.replace(/\D/g, '').slice(0, 6);
-        const sanitizedConfirmNewPin = confirmNewPin.replace(/\D/g, '').slice(0, 6);
 
         if (!normalizedEmployeeId) {
             setError(t.employeeIdRequired);
@@ -325,37 +327,21 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
             return;
         }
 
-        const shouldChangePin = sanitizedNewPin.length > 0 || sanitizedConfirmNewPin.length > 0;
-        if (shouldChangePin && sanitizedNewPin.length < 4) {
-            setError(t.newPinRequired);
-            return;
-        }
-        if (shouldChangePin && sanitizedNewPin !== sanitizedConfirmNewPin) {
-            setError(t.pinMismatch);
-            return;
-        }
-
         setSubmitting(true);
         setNotice('');
         setError('');
         try {
             const existingEmployee = await appEmployeeService.verifyEmployeePin(normalizedEmployeeId, sanitizedCurrentPin);
 
-            let effectivePin = sanitizedCurrentPin;
-            if (shouldChangePin) {
-                await appEmployeeService.updateEmployeePin(normalizedEmployeeId, sanitizedNewPin);
-                effectivePin = sanitizedNewPin;
-            }
-
             setEmployeeCode(normalizedEmployeeId);
-            setCurrentPin(effectivePin);
+            setCurrentPin(sanitizedCurrentPin);
             setNewPin('');
             setConfirmNewPin('');
             setVerifiedEmployee(existingEmployee);
             setDraft({
                 ...createDraft(),
                 employeeId: normalizedEmployeeId,
-                pin: effectivePin,
+                pin: sanitizedCurrentPin,
                 firstNameTH: cleanLegacyValue(existingEmployee.firstNameTH),
                 lastNameTH: cleanLegacyValue(existingEmployee.lastNameTH),
                 firstNameEN: cleanLegacyValue(existingEmployee.firstNameEN),
@@ -383,6 +369,19 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
     };
 
     const submitProfile = async () => {
+        // Client-side validation before sending to backend
+        const emailValue = draft.email.trim();
+        if (emailValue && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) {
+            setError(t.invalidEmail);
+            return;
+        }
+
+        const phoneValue = draft.phoneNumber.trim();
+        if (phoneValue && !/^[\d\s\-+()]{9,15}$/.test(phoneValue)) {
+            setError(t.invalidPhone);
+            return;
+        }
+
         setSubmitting(true);
         setError('');
         setNotice('');
@@ -392,12 +391,36 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                 throw new Error(t.employeeNotFound);
             }
 
+            // Handle optional PIN change from the form step
+            const sanitizedNewPin = newPin.replace(/\D/g, '').slice(0, 6);
+            const sanitizedConfirmNewPin = confirmNewPin.replace(/\D/g, '').slice(0, 6);
+            const shouldChangePin = sanitizedNewPin.length > 0 || sanitizedConfirmNewPin.length > 0;
+            if (shouldChangePin) {
+                if (sanitizedNewPin.length < 4) {
+                    setError(t.newPinRequired);
+                    setSubmitting(false);
+                    return;
+                }
+                if (sanitizedNewPin !== sanitizedConfirmNewPin) {
+                    setError(t.pinMismatch);
+                    setSubmitting(false);
+                    return;
+                }
+                await appEmployeeService.updateEmployeePin(employeeCode, sanitizedNewPin);
+            }
+
+            const effectivePin = shouldChangePin ? sanitizedNewPin : draft.pin;
             const employee = buildProfileEmployee(existingEmployee, {
                 ...draft,
                 employeeId: employeeCode,
-                pin: draft.pin,
+                pin: effectivePin,
             });
             await appEmployeeService.upsertEmployee(employee, employeeCode);
+            if (shouldChangePin) {
+                setNewPin('');
+                setConfirmNewPin('');
+                setCurrentPin(sanitizedNewPin);
+            }
             setNotice(t.updateDone);
             resetToVerifyStep();
         } catch (submitError) {
@@ -406,6 +429,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
             setSubmitting(false);
         }
     };
+
 
     const onSubmit = (event: React.FormEvent) => {
         event.preventDefault();
@@ -429,7 +453,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
 
                 {step === 'verify' ? (
                     <>
-                        <div className="filter-grid">
+                        <div className="filter-grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0,1fr))' }}>
                             <div>
                                 <label>{t.labels.employeeId}</label>
                                 <input
@@ -445,25 +469,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                                     type="password"
                                     value={currentPin}
                                     onChange={(event) => setCurrentPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                                    placeholder="123456"
-                                />
-                            </div>
-                            <div>
-                                <label>{t.labels.newPin}</label>
-                                <input
-                                    type="password"
-                                    value={newPin}
-                                    onChange={(event) => setNewPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                                    placeholder="123456"
-                                />
-                            </div>
-                            <div>
-                                <label>{t.labels.confirmPin}</label>
-                                <input
-                                    type="password"
-                                    value={confirmNewPin}
-                                    onChange={(event) => setConfirmNewPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                                    placeholder="123456"
+                                    placeholder="111111"
                                 />
                             </div>
                         </div>
@@ -476,13 +482,24 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                         </div>
 
                         <div className="filter-grid">
+                            {/* PIN change section — optional in form step */}
                             <div>
-                                <label>{t.labels.employeeId}</label>
-                                <input value={draft.employeeId} readOnly />
+                                <label>{t.labels.newPin}</label>
+                                <input
+                                    type="password"
+                                    value={newPin}
+                                    onChange={(event) => setNewPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                                    placeholder={language === 'th' ? 'เว้น ถ้าต้องการเปลี่ยน' : 'Leave blank to keep'}
+                                />
                             </div>
                             <div>
-                                <label>{t.labels.pin}</label>
-                                <input type="password" value={draft.pin} readOnly />
+                                <label>{t.labels.confirmPin}</label>
+                                <input
+                                    type="password"
+                                    value={confirmNewPin}
+                                    onChange={(event) => setConfirmNewPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                                    placeholder={language === 'th' ? 'ยืนยัน PIN ใหม่' : 'Confirm new PIN'}
+                                />
                             </div>
                             <div>
                                 <label>{t.labels.birthDate}</label>

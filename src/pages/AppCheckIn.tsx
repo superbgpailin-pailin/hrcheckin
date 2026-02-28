@@ -63,6 +63,12 @@ const TEXT = {
         invalidAuth: 'รหัสพนักงานหรือ PIN ไม่ถูกต้อง หรือบัญชีไม่ Active',
         noShift: 'ยังไม่มีกะที่อนุญาตสำหรับผู้ใช้นี้',
         langBtn: 'KH',
+        duplicateTitle: 'เช็คอินซ้ำ',
+        duplicateMsg: 'วันนี้คุณเช็คอินไปแล้ว ไม่สามารถเช็คอินซ้ำในวันเดียวกันได้',
+        duplicateClose: 'รับทราบ',
+        successTitle: 'เช็คอินสำเร็จ',
+        statusOnTime: 'ตรงเวลา',
+        statusLate: 'สาย',
     },
     km: {
         title: 'ចុះវត្តមានដោយខ្លួនឯង',
@@ -103,6 +109,12 @@ const TEXT = {
         invalidAuth: 'លេខកូដបុគ្គលិក ឬ PIN មិនត្រឹមត្រូវ ឬគណនីមិនសកម្ម',
         noShift: 'មិនមានវេនដែលអនុញ្ញាតសម្រាប់អ្នកប្រើនេះ',
         langBtn: 'TH',
+        duplicateTitle: 'ចុះវត្តម​ម្តាងត្តើត',
+        duplicateMsg: '្នៃនេះ លើក​បាន​ចុះវត្តម​័ទើ​។ មិន​អាច​ចុះវត្តម​ម្តាង​ទេតស្រាប​​បាន',
+        duplicateClose: 'យល់ក្រឮក',
+        successTitle: 'ចុះវត្តមប្រសប​ជោគ',
+        statusOnTime: 'ត្រង័​ម៉ោង',
+        statusLate: 'យឹត',
     },
 } as const;
 
@@ -123,6 +135,8 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
     const [capturedSelfie, setCapturedSelfie] = useState('');
     const [authenticating, setAuthenticating] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+    const [showDuplicatePopup, setShowDuplicatePopup] = useState(false);
 
     const webcamRef = useRef<Webcam>(null);
     const selfieWebcamRef = useRef<Webcam>(null);
@@ -216,6 +230,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         setStep('done');
         setError('');
         setNotice(uploadSkipped ? t.selfieUploadSkipped : '');
+        setShowSuccessPopup(true); // Show success popup immediately
     }, [capturedSelfie, config.lateGraceMinutes, t.selfieRequired, t.selfieUploadSkipped]);
 
     const handleQrPayload = useCallback(async (raw: string): Promise<void> => {
@@ -229,7 +244,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         }
 
         if (hasNonceBeenUsed(verified.payload.nonce)) {
-            throw new Error('QR นี้ถูกใช้งานแล้ว');
+            throw new Error('__DUPLICATE_NONCE__');
         }
 
         await finalizeCheckIn(
@@ -274,8 +289,18 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
             setScannerOpen(false);
             void handleQrPayload(code.data)
                 .catch((scanError) => {
-                    setError(scanError instanceof Error ? scanError.message : 'สแกนไม่สำเร็จ');
-                    setScannerOpen(true);
+                    const msg = scanError instanceof Error ? scanError.message : 'สแกนไม่สำเร็จ';
+                    // Duplicate check-in today → show dedicated popup
+                    const isDuplicate = msg === '__DUPLICATE_NONCE__'
+                        || msg.includes('วันนี้เช็คอินแล้ว')
+                        || msg.includes('duplicate')
+                        || msg.includes('already');
+                    if (isDuplicate) {
+                        setShowDuplicatePopup(true);
+                    } else {
+                        setError(msg);
+                        setScannerOpen(true);
+                    }
                 })
                 .finally(() => {
                     setSubmitting(false);
@@ -299,23 +324,61 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         setError('');
     };
 
-    const restart = () => {
-        setStep('auth');
-        setEmployee(null);
-        setSelectedShiftId('');
-        setEmployeeId('');
-        setPin('');
-        setResult(null);
-        setError('');
-        setNotice('');
-        setScannerOpen(false);
-        setCapturedSelfie('');
-        setAuthenticating(false);
-        setSubmitting(false);
-    };
 
     return (
         <div className="checkin-screen">
+            {/* ====== Duplicate check-in popup ====== */}
+            {showDuplicatePopup && (
+                <div className="modal-backdrop" onClick={() => { setShowDuplicatePopup(false); setScannerOpen(true); }}>
+                    <div className="modal-box variant-warning" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-icon">⚠️</div>
+                        <div className="modal-badge warning">{t.duplicateTitle}</div>
+                        <h3>{t.duplicateTitle}</h3>
+                        <p>{t.duplicateMsg}</p>
+                        <div className="modal-actions">
+                            <button
+                                type="button"
+                                className="btn-primary"
+                                onClick={() => { setShowDuplicatePopup(false); setStep('auth'); }}
+                            >
+                                {t.duplicateClose}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ====== Success popup ====== */}
+            {showSuccessPopup && result && (
+                <div className="modal-backdrop">
+                    <div className="modal-box">
+                        <div className="modal-icon">✅</div>
+                        <div className={`modal-badge ${result.status === 'Late' ? 'late' : 'success'}`}>
+                            {result.status === 'Late' ? t.statusLate : t.statusOnTime}
+                        </div>
+                        <h3>{t.successTitle}</h3>
+                        <p style={{ fontWeight: 600, fontSize: '1.05rem', color: '#0f172a' }}>{result.employeeName}</p>
+                        <div className="modal-detail">
+                            <p>⏰ {t.checkInAt}: <strong>{formatThaiDateTime(result.checkInAt)}</strong></p>
+                            <p>🏁 {t.estimatedOut}: <strong>{formatThaiDateTime(result.estimatedCheckOutAt)}</strong></p>
+                            <p>📋 {t.shift}: <strong>{result.shiftLabel}</strong></p>
+                            {result.lateMinutes > 0 && (
+                                <p>⏱ {t.status}: <strong>{result.status} ({result.lateMinutes} min)</strong></p>
+                            )}
+                        </div>
+                        {notice && <p style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#64748b' }}>{notice}</p>}
+                        <div className="modal-actions">
+                            <button
+                                type="button"
+                                className="btn-primary"
+                                onClick={onBack}
+                            >
+                                {t.home}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             <div className="checkin-card reveal-up">
                 <div className="checkin-header">
                     <div className="inline-actions" style={{ justifyContent: 'space-between', width: '100%' }}>
@@ -486,10 +549,12 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                                 videoConstraints={{ facingMode: 'environment' }}
                             />
                         </div>
-                        <details>
-                            <summary>QR ตัวอย่างสำหรับทดสอบ (dev)</summary>
-                            <code style={{ whiteSpace: 'break-spaces' }}>{qrPreview}</code>
-                        </details>
+                        {import.meta.env.DEV && (
+                            <details>
+                                <summary>QR ตัวอย่างสำหรับทดสอบ (dev)</summary>
+                                <code style={{ whiteSpace: 'break-spaces' }}>{qrPreview}</code>
+                            </details>
+                        )}
                         <div className="inline-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
                             <button
                                 type="button"
@@ -509,7 +574,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                     </div>
                 ) : null}
 
-                {step === 'done' && result ? (
+                {step === 'done' && result && !showSuccessPopup ? (
                     <div className="result-panel">
                         <div className="result-badge">{t.success}</div>
                         <h3>{result.employeeName}</h3>
@@ -519,9 +584,8 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                         <p>{t.shift}: {result.shiftLabel}</p>
                         {notice ? <p className="panel-muted">{notice}</p> : null}
 
-                        <div className="inline-actions">
-                            <button className="btn-muted" type="button" onClick={onBack}>{t.home}</button>
-                            <button className="btn-primary" type="button" onClick={restart}>{t.nextPerson}</button>
+                        <div className="inline-actions" style={{ justifyContent: 'center' }}>
+                            <button className="btn-primary" type="button" onClick={onBack}>{t.home}</button>
                         </div>
                     </div>
                 ) : null}

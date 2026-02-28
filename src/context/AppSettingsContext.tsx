@@ -42,7 +42,7 @@ interface AppSettingsProviderProps {
 export const AppSettingsProvider: React.FC<AppSettingsProviderProps> = ({ children, enabled = true }) => {
     const initialConfig = readStoredConfig();
     const [config, setConfig] = useState<AppSystemConfig>(initialConfig);
-    const [loading, setLoading] = useState(() => enabled && initialConfig === DEFAULT_CONFIG);
+    const [loading, setLoading] = useState(() => enabled && !localStorage.getItem(SETTINGS_CACHE_KEY));
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
