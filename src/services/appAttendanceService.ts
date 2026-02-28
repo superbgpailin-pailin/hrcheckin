@@ -285,7 +285,7 @@ const toSummary = (
         id: row.id,
         employeeId: row.employee_id,
         employeeName: employee
-            ? `${employee.firstNameTH} ${employee.lastNameTH}`
+            ? `${employee.firstNameTH} ${employee.lastNameTH}${employee.nickname ? ` (${employee.nickname})` : ''}`
             : row.employee_id,
         department: employee?.department || '-',
         role: employee?.role || 'Employee',
@@ -606,6 +606,19 @@ export const appAttendanceService = {
             .from(tableName)
             .delete()
             .in('id', recordIds);
+
+        if (error) {
+            throw new Error(error.message);
+        }
+
+        clearAttendanceCache();
+    },
+
+    async updateCheckIn(recordId: string, updates: { shift_name?: string; shift?: string; timestamp?: string; check_in_time?: string; status?: string }): Promise<void> {
+        const { error } = await supabase
+            .from(tableName)
+            .update(updates)
+            .eq('id', recordId);
 
         if (error) {
             throw new Error(error.message);

@@ -28,6 +28,11 @@ export const AppAttendance: React.FC = () => {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [deletingBulk, setDeletingBulk] = useState(false);
 
+    const [editingRecord, setEditingRecord] = useState<AttendanceSummaryRecord | null>(null);
+    const [editShiftId, setEditShiftId] = useState('');
+    const [editDate, setEditDate] = useState('');
+    const [editTime, setEditTime] = useState('');
+
     const load = async () => {
         setLoading(true);
         setError('');
@@ -113,6 +118,48 @@ export const AppAttendance: React.FC = () => {
             setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete check-in');
         } finally {
             setDeletingId('');
+        }
+    };
+
+    const startEdit = (record: AttendanceSummaryRecord) => {
+        setEditingRecord(record);
+        setEditShiftId(record.shiftId);
+        const dt = new Date(record.checkInAt);
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        setEditDate(`${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`);
+        setEditTime(`${pad(dt.getHours())}:${pad(dt.getMinutes())}`);
+    };
+
+    const cancelEdit = () => {
+        setEditingRecord(null);
+    };
+
+    const saveEdit = async () => {
+        if (!editingRecord) return;
+        const confirmEdit = window.confirm(`กำลังบันทึกการแก้ไขข้อมูลของ ${editingRecord.employeeId} ใช่หรือไม่?`);
+        if (!confirmEdit) return;
+
+        setError('');
+        setNotice('');
+        setLoading(true);
+
+        try {
+            const shiftObj = config.shifts.find(s => s.id === editShiftId) || config.shifts[0];
+            const newIso = new Date(`${editDate}T${editTime}:00`).toISOString();
+
+            await appAttendanceService.updateCheckIn(editingRecord.id, {
+                shift_name: shiftObj.id,
+                shift: shiftObj.id,
+                timestamp: newIso,
+                check_in_time: newIso
+            });
+
+            setNotice('แก้ไขข้อมูลสำเร็จ');
+            setEditingRecord(null);
+            await load();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'แก้ไขไม่สำเร็จ');
+            setLoading(false);
         }
     };
 
@@ -280,14 +327,24 @@ export const AppAttendance: React.FC = () => {
                                             )}
                                         </td>
                                         <td>
-                                            <button
-                                                type="button"
-                                                className="btn-danger"
-                                                onClick={() => void deleteCheckIn(record)}
-                                                disabled={deletingId === record.id}
-                                            >
-                                                {deletingId === record.id ? 'Deleting...' : 'Delete'}
-                                            </button>
+                                            <div className="inline-actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                                                <button
+                                                    type="button"
+                                                    className="btn-muted"
+                                                    onClick={() => startEdit(record)}
+                                                    disabled={deletingId === record.id}
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="btn-danger"
+                                                    onClick={() => void deleteCheckIn(record)}
+                                                    disabled={deletingId === record.id}
+                                                >
+                                                    {deletingId === record.id ? 'Deleting...' : 'Delete'}
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -296,6 +353,36 @@ export const AppAttendance: React.FC = () => {
                     </div>
                 ) : null}
             </section>
+
+            {editingRecord ? (
+                <div className="modal-backdrop" onClick={cancelEdit}>
+                    <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-icon">✏️</div>
+                        <h3>แก้ไข Check-in</h3>
+                        <p style={{ fontWeight: 600, fontSize: '1.05rem', color: '#0f172a' }}>{editingRecord.employeeName}</p>
+
+                        <div className="stack-form" style={{ marginTop: '1rem', textAlign: 'left' }}>
+                            <label>กะทำงาน (Shift)</label>
+                            <select value={editShiftId} onChange={(e) => setEditShiftId(e.target.value)}>
+                                {config.shifts.map(s => (
+                                    <option key={s.id} value={s.id}>{s.label} ({s.start}-{s.end})</option>
+                                ))}
+                            </select>
+
+                            <label>วันที่</label>
+                            <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+
+                            <label>เวลา</label>
+                            <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                        </div>
+
+                        <div className="modal-actions" style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+                            <button type="button" className="btn-muted" onClick={cancelEdit}>ยกเลิก</button>
+                            <button type="button" className="btn-primary" onClick={() => void saveEdit()}>บันทึกการแก้ไข</button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
 
             {previewPhoto ? (
                 <ImageLightbox

@@ -13,7 +13,7 @@ const uploadToStorage = async (path: string, file: File): Promise<string> => {
     const { error: uploadError } = await supabase
         .storage
         .from(bucket)
-        .upload(path, file, { upsert: true, contentType: file.type || 'image/webp' });
+        .upload(path, file, { contentType: file.type || 'image/webp' });
 
     if (uploadError) {
         console.error('[uploadToStorage] Supabase storage error:', uploadError.message, { path, bucket });
