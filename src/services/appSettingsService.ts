@@ -4,6 +4,8 @@ import type { AppSystemConfig } from '../types/app';
 
 const tableName = 'settings';
 const settingsId = 'checkin_v2';
+const READ_TIMEOUT_MS = 8000;
+const READ_RETRY_COUNT = 1;
 let settingsTableUnavailable = false;
 
 interface SettingsRow {
@@ -15,6 +17,58 @@ const isSchemaMissingError = (message: string): boolean => {
     return normalized.includes('could not find the table')
         || normalized.includes('schema cache')
         || normalized.includes('does not exist');
+};
+
+const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    if (
+        typeof error === 'object'
+        && error !== null
+        && 'message' in error
+        && typeof (error as { message?: unknown }).message === 'string'
+    ) {
+        return (error as { message: string }).message;
+    }
+    return String(error || '');
+};
+
+const isTransportError = (message: string): boolean => {
+    const normalized = message.trim().toLowerCase();
+    return normalized === 'failed to fetch'
+        || normalized.includes('fetch')
+        || normalized.includes('timeout')
+        || normalized.includes('connection timed out')
+        || normalized.includes('connection terminated')
+        || normalized.includes('status 522')
+        || normalized.includes('error code 522');
+};
+
+const withReadRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= READ_RETRY_COUNT; attempt += 1) {
+        try {
+            return await Promise.race<T>([
+                operation(),
+                new Promise<T>((_, reject) => {
+                    globalThis.setTimeout(() => reject(new Error('Settings request timeout')), READ_TIMEOUT_MS);
+                }),
+            ]);
+        } catch (error) {
+            lastError = error;
+            const message = getErrorMessage(error);
+            if (!isTransportError(message) || attempt >= READ_RETRY_COUNT) {
+                throw error;
+            }
+            await new Promise<void>((resolve) => {
+                globalThis.setTimeout(resolve, 350 * (attempt + 1));
+            });
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('Settings request timeout');
 };
 
 const normalizeNullableNumber = (value: unknown): number | null => {
@@ -97,7 +151,7 @@ const normalizeLateRules = (rules?: AppSystemConfig['lateRules']): AppSystemConf
 
             return {
                 id: rule.id || `late-rule-${index + 1}`,
-                label: rule.label?.trim() || `กฎที่ ${index + 1}`,
+                label: rule.label?.trim() || `Rule ${index + 1}`,
                 minMinutes,
                 maxMinutes,
                 deductionAmount: Math.max(0, Math.floor(Number(rule.deductionAmount) || 0)),
@@ -150,11 +204,13 @@ export const appSettingsService = {
         }
 
         try {
-            const { data, error } = await supabase
-                .from(tableName)
-                .select('config')
-                .eq('id', settingsId)
-                .limit(1);
+            const { data, error } = await withReadRetry(async () => {
+                return await supabase
+                    .from(tableName)
+                    .select('config')
+                    .eq('id', settingsId)
+                    .limit(1);
+            });
 
             if (error) {
                 throw error;
@@ -167,7 +223,7 @@ export const appSettingsService = {
 
             return mergeConfig(rows[0].config);
         } catch (fetchError) {
-            const message = fetchError instanceof Error ? fetchError.message : String(fetchError || '');
+            const message = getErrorMessage(fetchError);
             if (isSchemaMissingError(message)) {
                 settingsTableUnavailable = true;
             }

@@ -16,8 +16,12 @@ const attendanceSelectColumns = [
     'type',
     'photo_url',
 ];
-const duplicateCheckInMessage = 'วันนี้เช็คอินแล้ว';
-const saveFailedMessage = 'บันทึกเช็คอินไม่สำเร็จบนเซิร์ฟเวอร์ กรุณาลองใหม่หรือติดต่อแอดมิน';
+const duplicateCheckInMessage = '\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49\u0e40\u0e0a\u0e47\u0e04\u0e2d\u0e34\u0e19\u0e41\u0e25\u0e49\u0e27';
+const saveFailedMessage = 'Check-in could not be saved on the server. Please try again or contact admin.';
+const readFailedMessage = 'Database server is slow or unavailable. Please try again.';
+const READ_TIMEOUT_MS = 8000;
+const READ_RETRY_COUNT = 1;
+
 
 interface AttendanceRow {
     id?: string | null;
@@ -194,6 +198,44 @@ const getErrorMessage = (error: unknown): string => {
     }
 
     return String(error || '');
+};
+
+const isTransportError = (message: string): boolean => {
+    const normalized = message.trim().toLowerCase();
+    return normalized === 'failed to fetch'
+        || normalized.includes('fetch')
+        || normalized.includes('timeout')
+        || normalized.includes('connection timed out')
+        || normalized.includes('connection terminated')
+        || normalized.includes('status 522')
+        || normalized.includes('error code 522');
+};
+
+const withReadRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= READ_RETRY_COUNT; attempt += 1) {
+        try {
+            return await Promise.race<T>([
+                operation(),
+                new Promise<T>((_, reject) => {
+                    globalThis.setTimeout(() => reject(new Error(readFailedMessage)), READ_TIMEOUT_MS);
+                }),
+            ]);
+        } catch (error) {
+            lastError = error;
+            const message = getErrorMessage(error);
+            if (!isTransportError(message) || attempt >= READ_RETRY_COUNT) {
+                throw error;
+            }
+
+            await new Promise<void>((resolve) => {
+                globalThis.setTimeout(resolve, 350 * (attempt + 1));
+            });
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(readFailedMessage);
 };
 
 const toIsoString = (value: unknown): string => {
@@ -386,7 +428,9 @@ const loadRowsFromSupabase = async (
             query = query.lte('timestamp', `${filters.to}T23:59:59`);
         }
 
-        const { data, error } = await query;
+        const { data, error } = await withReadRetry(async () => {
+            return await query;
+        });
         if (error) {
             throw error;
         }
@@ -579,7 +623,11 @@ export const appAttendanceService = {
             const remoteRows = await loadRowsFromSupabase(filters);
             return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
         } catch (error) {
-            throw new Error(getErrorMessage(error) || saveFailedMessage);
+            const message = getErrorMessage(error);
+            if (isTransportError(message)) {
+                throw new Error(readFailedMessage);
+            }
+            throw new Error(message || saveFailedMessage);
         }
     },
 
@@ -596,4 +644,3 @@ export const appAttendanceService = {
         clearAttendanceCache();
     },
 };
-

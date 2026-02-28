@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Webcam from 'react-webcam';
 import jsQR from 'jsqr';
 import { useAppLanguage } from '../context/AppLanguageContext';
@@ -170,8 +170,9 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
             setCapturedSelfie('');
             setScannerOpen(false);
             setStep('shift');
-        } catch {
-            setError(t.invalidAuth);
+        } catch (authError) {
+            const message = authError instanceof Error ? authError.message : '';
+            setError(message || t.invalidAuth);
         } finally {
             setAuthenticating(false);
         }

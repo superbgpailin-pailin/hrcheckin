@@ -2,19 +2,34 @@ import { supabase } from '../lib/supabaseClient';
 import { compressImage } from '../utils/imageCompression';
 
 const bucket = 'employee-documents';
-
-const fileToDataUrl = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์รูปภาพได้'));
-        reader.readAsDataURL(file);
-    });
-};
+const UPLOAD_FAILED_MESSAGE = 'อัปโหลดรูปภาพไม่สำเร็จ กรุณาลองใหม่';
 
 const extensionFromMime = (mime: string): string => {
     const [, ext = 'webp'] = mime.split('/');
     return ext.toLowerCase();
+};
+
+const uploadToStorage = async (path: string, file: File): Promise<string> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        const { error: uploadError } = await supabase
+            .storage
+            .from(bucket)
+            .upload(path, file, { upsert: false, contentType: file.type || 'image/webp' });
+
+        if (!uploadError) {
+            const publicUrlResult = supabase.storage.from(bucket).getPublicUrl(path);
+            const publicUrl = publicUrlResult.data.publicUrl;
+            if (publicUrl) {
+                return publicUrl;
+            }
+        }
+
+        if (attempt === 1) {
+            throw new Error(UPLOAD_FAILED_MESSAGE);
+        }
+    }
+
+    throw new Error(UPLOAD_FAILED_MESSAGE);
 };
 
 export const appFileUploadService = {
@@ -24,20 +39,7 @@ export const appFileUploadService = {
         const safeId = employeeId.trim().toUpperCase() || 'UNKNOWN';
         const path = `${safeId}/${category}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-        const { error: uploadError } = await supabase
-            .storage
-            .from(bucket)
-            .upload(path, compressed, { upsert: false, contentType: compressed.type || 'image/webp' });
-
-        if (!uploadError) {
-            const publicUrlResult = supabase.storage.from(bucket).getPublicUrl(path);
-            const publicUrl = publicUrlResult.data.publicUrl;
-            if (publicUrl) {
-                return publicUrl;
-            }
-        }
-
-        return fileToDataUrl(compressed);
+        return uploadToStorage(path, compressed);
     },
 
     async uploadCheckInSelfie(file: File, employeeId: string): Promise<string> {
@@ -46,19 +48,6 @@ export const appFileUploadService = {
         const safeId = employeeId.trim().toUpperCase() || 'UNKNOWN';
         const path = `checkin/${safeId}/selfie/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-        const { error: uploadError } = await supabase
-            .storage
-            .from(bucket)
-            .upload(path, compressed, { upsert: false, contentType: compressed.type || 'image/webp' });
-
-        if (!uploadError) {
-            const publicUrlResult = supabase.storage.from(bucket).getPublicUrl(path);
-            const publicUrl = publicUrlResult.data.publicUrl;
-            if (publicUrl) {
-                return publicUrl;
-            }
-        }
-
-        return fileToDataUrl(compressed);
+        return uploadToStorage(path, compressed);
     },
 };

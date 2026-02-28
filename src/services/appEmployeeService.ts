@@ -29,6 +29,9 @@ interface EmployeeRow {
 type EmployeePayload = Record<string, string | null>;
 
 const tableName = 'employees';
+const READ_TIMEOUT_MS = 8000;
+const READ_RETRY_COUNT = 1;
+const BACKEND_UNAVAILABLE_MESSAGE = 'เซิร์ฟเวอร์ฐานข้อมูลตอบช้าหรือไม่พร้อมใช้งาน กรุณาลองใหม่';
 const employeeSelectFields = [
     'id',
     'role',
@@ -82,6 +85,48 @@ const getErrorMessage = (error: unknown): string => {
     }
 
     return String(error || '');
+};
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+});
+
+const isTransportError = (message: string): boolean => {
+    const normalized = message.trim().toLowerCase();
+    return normalized === 'failed to fetch'
+        || normalized.includes('fetch')
+        || normalized.includes('timeout')
+        || normalized.includes('connection timed out')
+        || normalized.includes('connection terminated')
+        || normalized.includes('status 522')
+        || normalized.includes('error code 522');
+};
+
+const createTimeoutError = (): Error => new Error(BACKEND_UNAVAILABLE_MESSAGE);
+
+const withReadRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= READ_RETRY_COUNT; attempt += 1) {
+        try {
+            return await Promise.race<T>([
+                operation(),
+                new Promise<T>((_, reject) => {
+                    globalThis.setTimeout(() => reject(createTimeoutError()), READ_TIMEOUT_MS);
+                }),
+            ]);
+        } catch (error) {
+            lastError = error;
+            const message = getErrorMessage(error);
+            if (!isTransportError(message) || attempt >= READ_RETRY_COUNT) {
+                throw error;
+            }
+
+            await sleep(350 * (attempt + 1));
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : createTimeoutError();
 };
 
 const buildEmployeeAvatar = (employeeId: string): string => {
@@ -188,7 +233,7 @@ const normalizeEmployeeStatus = (value: string | null | undefined): AppEmployee[
 
 const toAppEmployee = (row: EmployeeRow): AppEmployee => {
     const role = normalizeEmployeeRole(row.role);
-    const fallbackPhoto = `https://ui-avatars.com/api/?name=${encodeURIComponent(row.id)}&background=334155&color=fff`;
+    const fallbackPhoto = buildEmployeeAvatar(row.id);
 
     return {
         id: row.id,
@@ -376,10 +421,12 @@ const renameEmployeeRelations = async (previousId: string, nextId: string): Prom
 export const appEmployeeService = {
     async getEmployees(): Promise<AppEmployee[]> {
         try {
-            const { data, error } = await supabase
-                .from(tableName)
-                .select(employeeSelectFields)
-                .order('id', { ascending: true });
+            const { data, error } = await withReadRetry(async () => {
+                return await supabase
+                    .from(tableName)
+                    .select(employeeSelectFields)
+                    .order('id', { ascending: true });
+            });
 
             if (error) {
                 throw error;
@@ -393,8 +440,8 @@ export const appEmployeeService = {
             if (cachedEmployees.length > 0) {
                 return cachedEmployees.sort((a, b) => a.id.localeCompare(b.id));
             }
-            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
-                throw new Error('ไม่สามารถเชื่อมต่อฐานข้อมูลพนักงานได้');
+            if (isTransportError(message)) {
+                throw new Error(BACKEND_UNAVAILABLE_MESSAGE);
             }
             throw new Error(message || 'ไม่สามารถโหลดรายชื่อพนักงานได้');
         }
@@ -425,8 +472,8 @@ export const appEmployeeService = {
             }
         } catch (error) {
             const message = getErrorMessage(error);
-            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
-                throw new Error('ไม่สามารถบันทึกข้อมูลพนักงานได้ กรุณาตรวจสอบการเชื่อมต่อ');
+            if (isTransportError(message)) {
+                throw new Error('ไม่สามารถบันทึกข้อมูลพนักงานได้ กรุณาลองใหม่');
             }
             throw new Error(message || 'ไม่สามารถบันทึกข้อมูลพนักงานได้');
         }
@@ -447,8 +494,8 @@ export const appEmployeeService = {
             await retryBulkUpsertWithLegacyPayload(payloads, error.message);
         } catch (error) {
             const message = getErrorMessage(error);
-            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
-                throw new Error('ไม่สามารถบันทึกข้อมูลพนักงานได้ กรุณาตรวจสอบการเชื่อมต่อ');
+            if (isTransportError(message)) {
+                throw new Error('ไม่สามารถบันทึกข้อมูลพนักงานได้ กรุณาลองใหม่');
             }
             throw new Error(message || 'ไม่สามารถบันทึกข้อมูลพนักงานได้');
         }
@@ -460,29 +507,37 @@ export const appEmployeeService = {
             return null;
         }
 
-        const { data, error } = await supabase
-            .from(tableName)
-            .select(employeeSelectFields)
-            .eq('id', normalized)
-            .maybeSingle();
+        const cachedEmployee = readCachedEmployees().find((employee) => employee.id.trim().toUpperCase() === normalized);
 
-        if (error) {
-            const message = getErrorMessage(error);
-            const cachedEmployee = readCachedEmployees().find((employee) => employee.id.trim().toUpperCase() === normalized);
+        try {
+            const { data, error } = await withReadRetry(async () => {
+                return await supabase
+                    .from(tableName)
+                    .select(employeeSelectFields)
+                    .eq('id', normalized)
+                    .maybeSingle();
+            });
+
+            if (error) {
+                throw error;
+            }
+
+            if (!data) {
+                return null;
+            }
+
+            return toAppEmployee(data as unknown as EmployeeRow);
+        } catch (error) {
             if (cachedEmployee) {
                 return cachedEmployee;
             }
-            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
-                throw new Error('ไม่สามารถเชื่อมต่อฐานข้อมูลพนักงานได้');
+
+            const message = getErrorMessage(error);
+            if (isTransportError(message)) {
+                throw new Error(BACKEND_UNAVAILABLE_MESSAGE);
             }
             throw new Error(message);
         }
-
-        if (!data) {
-            return null;
-        }
-
-        return toAppEmployee(data as unknown as EmployeeRow);
     },
 
     async verifyEmployeePin(id: string, pin: string): Promise<AppEmployee> {
@@ -498,7 +553,7 @@ export const appEmployeeService = {
 
         const employee = await appEmployeeService.getEmployeeById(normalized);
         if (!employee) {
-            throw new Error('ไม่พบรหัสพนักงานที่แอดมินสร้างไว้');
+            throw new Error('ไม่พบรหัสพนักงานนี้ กรุณาติดต่อแอดมิน');
         }
 
         const currentPin = sanitizePin(employee.pin || '123456');
@@ -529,7 +584,7 @@ export const appEmployeeService = {
             throw new Error('กรุณาระบุรหัสพนักงาน');
         }
         if (sanitizedPin.length < 4) {
-            throw new Error('PIN ต้องอย่างน้อย 4 หลัก');
+            throw new Error('PIN ต้องมีอย่างน้อย 4 หลัก');
         }
 
         const { data, error } = await supabase
@@ -544,7 +599,7 @@ export const appEmployeeService = {
         }
 
         if (!data) {
-            throw new Error('ไม่พบรหัสพนักงานที่แอดมินสร้างไว้');
+            throw new Error('ไม่พบรหัสพนักงานนี้ กรุณาติดต่อแอดมิน');
         }
     },
 
