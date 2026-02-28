@@ -87,7 +87,7 @@ const optionalInsertColumns = [
 
 const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v1';
 const ATTENDANCE_CACHE_TTL_MS = 30 * 1000;
-const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v2';
+const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v3';
 let resolvedAttendanceSelectColumns = [...attendanceSelectColumns];
 
 const attendanceCacheKey = (filters: AttendanceFilters): string => {
@@ -589,6 +589,23 @@ export const appAttendanceService = {
             .from(tableName)
             .delete()
             .eq('id', recordId);
+
+        if (error) {
+            throw new Error(error.message);
+        }
+
+        clearAttendanceCache();
+    },
+
+    async deleteCheckIns(recordIds: string[]): Promise<void> {
+        if (!recordIds || recordIds.length === 0) {
+            return;
+        }
+
+        const { error } = await supabase
+            .from(tableName)
+            .delete()
+            .in('id', recordIds);
 
         if (error) {
             throw new Error(error.message);

@@ -25,11 +25,14 @@ export const AppAttendance: React.FC = () => {
     const [toDate, setToDate] = useState(new Date().toISOString().slice(0, 10));
     const [employeeId, setEmployeeId] = useState('all');
     const [previewPhoto, setPreviewPhoto] = useState<{ src: string; alt: string } | null>(null);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [deletingBulk, setDeletingBulk] = useState(false);
 
     const load = async () => {
         setLoading(true);
         setError('');
         setNotice('');
+        setSelectedIds(new Set());
 
         try {
             const result = await appAttendanceService.listCheckIns(
@@ -48,6 +51,45 @@ export const AppAttendance: React.FC = () => {
             setRecords([]);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const toggleSelection = (id: string) => {
+        const next = new Set(selectedIds);
+        if (next.has(id)) {
+            next.delete(id);
+        } else {
+            next.add(id);
+        }
+        setSelectedIds(next);
+    };
+
+    const toggleAll = () => {
+        if (selectedIds.size === records.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(records.map((r) => r.id)));
+        }
+    };
+
+    const deleteSelected = async () => {
+        if (selectedIds.size === 0) return;
+
+        const shouldDelete = window.confirm(`Delete ${selectedIds.size} selected check-ins?`);
+        if (!shouldDelete) return;
+
+        setDeletingBulk(true);
+        setError('');
+        setNotice('');
+
+        try {
+            await appAttendanceService.deleteCheckIns(Array.from(selectedIds));
+            setNotice(`${selectedIds.size} check-ins deleted successfully.`);
+            await load();
+        } catch (deleteError) {
+            setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete check-ins');
+        } finally {
+            setDeletingBulk(false);
         }
     };
 
@@ -141,7 +183,19 @@ export const AppAttendance: React.FC = () => {
                     <div className="panel-muted">
                         Log rows {stats.rows} | unique day-shifts {stats.uniqueShifts} | late {stats.lateRows}
                     </div>
-                    <button type="button" className="btn-muted" onClick={exportCheckInCsv}>Export Log CSV</button>
+                    <div className="inline-actions">
+                        {selectedIds.size > 0 ? (
+                            <button
+                                type="button"
+                                className="btn-danger"
+                                onClick={() => void deleteSelected()}
+                                disabled={deletingBulk}
+                            >
+                                {deletingBulk ? 'Deleting...' : `Delete Selected (${selectedIds.size})`}
+                            </button>
+                        ) : null}
+                        <button type="button" className="btn-muted" onClick={exportCheckInCsv}>Export Log CSV</button>
+                    </div>
                 </div>
 
                 {error ? <div className="form-error">{error}</div> : null}
@@ -165,6 +219,13 @@ export const AppAttendance: React.FC = () => {
                         <table>
                             <thead>
                                 <tr>
+                                    <th style={{ width: '40px' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={records.length > 0 && selectedIds.size === records.length}
+                                            onChange={toggleAll}
+                                        />
+                                    </th>
                                     <th>Employee</th>
                                     <th>Shift</th>
                                     <th>Check-in</th>
@@ -177,7 +238,14 @@ export const AppAttendance: React.FC = () => {
                             </thead>
                             <tbody>
                                 {records.map((record) => (
-                                    <tr key={record.id}>
+                                    <tr key={record.id} className={selectedIds.has(record.id) ? 'selected-row' : ''}>
+                                        <td>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.has(record.id)}
+                                                onChange={() => toggleSelection(record.id)}
+                                            />
+                                        </td>
                                         <td>
                                             <strong>{getEmployeeLabel(record)}</strong>
                                             <div className="panel-muted">{record.employeeId}</div>
