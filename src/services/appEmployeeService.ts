@@ -203,6 +203,29 @@ const retryUpsertWithLegacyPayload = async (payload: EmployeePayload, message: s
     throw new Error(lastMessage);
 };
 
+const retryBulkUpsertWithLegacyPayload = async (payloads: EmployeePayload[], message: string): Promise<void> => {
+    let fallbackPayloads = [...payloads];
+    let lastMessage = message;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        const nextPayloads = fallbackPayloads.map((payload) => removeColumnsByMessage(payload, lastMessage).nextPayload);
+        const changed = nextPayloads.some((payload, index) => Object.keys(payload).length !== Object.keys(fallbackPayloads[index]).length);
+        if (!changed) {
+            throw new Error(lastMessage);
+        }
+
+        fallbackPayloads = nextPayloads;
+        const { error } = await supabase.from(tableName).upsert(fallbackPayloads);
+        if (!error) {
+            return;
+        }
+
+        lastMessage = error.message;
+    }
+
+    throw new Error(lastMessage);
+};
+
 export const appEmployeeService = {
     async getEmployees(): Promise<AppEmployee[]> {
         try {
@@ -234,6 +257,20 @@ export const appEmployeeService = {
         }
 
         await retryUpsertWithLegacyPayload(payload, error.message);
+    },
+
+    async upsertEmployees(items: AppEmployee[]): Promise<void> {
+        if (!items.length) {
+            return;
+        }
+
+        const payloads = items.map(toPayload);
+        const { error } = await supabase.from(tableName).upsert(payloads);
+        if (!error) {
+            return;
+        }
+
+        await retryBulkUpsertWithLegacyPayload(payloads, error.message);
     },
 
     async getEmployeeById(id: string): Promise<AppEmployee | null> {

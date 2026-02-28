@@ -15,17 +15,58 @@ interface AppEmployeeContextValue {
 
 const AppEmployeeContext = createContext<AppEmployeeContextValue | undefined>(undefined);
 
-export const AppEmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [employees, setEmployees] = useState<AppEmployee[]>([]);
-    const [loading, setLoading] = useState(true);
+const EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v1';
+
+const sortEmployeesById = (items: AppEmployee[]): AppEmployee[] => {
+    return [...items].sort((a, b) => a.id.localeCompare(b.id));
+};
+
+const readStoredEmployees = (): AppEmployee[] => {
+    try {
+        const raw = localStorage.getItem(EMPLOYEES_CACHE_KEY);
+        if (!raw) {
+            return [];
+        }
+
+        const parsed = JSON.parse(raw) as AppEmployee[];
+        return Array.isArray(parsed) ? sortEmployeesById(parsed) : [];
+    } catch {
+        return [];
+    }
+};
+
+const persistEmployees = (items: AppEmployee[]): void => {
+    localStorage.setItem(EMPLOYEES_CACHE_KEY, JSON.stringify(sortEmployeesById(items)));
+};
+
+const mergeEmployees = (current: AppEmployee[], nextItems: AppEmployee[]): AppEmployee[] => {
+    const map = new Map(current.map((employee) => [employee.id, employee]));
+    nextItems.forEach((employee) => {
+        map.set(employee.id, employee);
+    });
+    return sortEmployeesById(Array.from(map.values()));
+};
+
+interface AppEmployeeProviderProps {
+    children: React.ReactNode;
+    enabled?: boolean;
+}
+
+export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ children, enabled = true }) => {
+    const initialEmployees = readStoredEmployees();
+    const [employees, setEmployees] = useState<AppEmployee[]>(initialEmployees);
+    const [loading, setLoading] = useState(() => enabled && initialEmployees.length === 0);
     const [error, setError] = useState<string | null>(null);
 
-    const refreshEmployees = useCallback(async () => {
-        setLoading(true);
+    const loadEmployees = useCallback(async (silent = false) => {
+        if (!silent) {
+            setLoading(true);
+        }
         setError(null);
         try {
             const result = await appEmployeeService.getEmployees();
             setEmployees(result);
+            persistEmployees(result);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'ไม่สามารถโหลดรายชื่อพนักงานได้');
         } finally {
@@ -33,26 +74,46 @@ export const AppEmployeeProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, []);
 
+    const refreshEmployees = useCallback(async () => {
+        await loadEmployees(false);
+    }, [loadEmployees]);
+
     useEffect(() => {
-        void refreshEmployees();
-    }, [refreshEmployees]);
+        if (!enabled) {
+            setLoading(false);
+            return;
+        }
+
+        const hasCachedEmployees = readStoredEmployees().length > 0;
+        void loadEmployees(hasCachedEmployees);
+    }, [enabled, loadEmployees]);
 
     const saveEmployee = useCallback(async (employee: AppEmployee) => {
         await appEmployeeService.upsertEmployee(employee);
-        await refreshEmployees();
-    }, [refreshEmployees]);
+        setEmployees((current) => {
+            const next = mergeEmployees(current, [employee]);
+            persistEmployees(next);
+            return next;
+        });
+    }, []);
 
     const saveEmployees = useCallback(async (items: AppEmployee[]) => {
-        for (const employee of items) {
-            await appEmployeeService.upsertEmployee(employee);
-        }
-        await refreshEmployees();
-    }, [refreshEmployees]);
+        await appEmployeeService.upsertEmployees(items);
+        setEmployees((current) => {
+            const next = mergeEmployees(current, items);
+            persistEmployees(next);
+            return next;
+        });
+    }, []);
 
     const deleteEmployee = useCallback(async (employeeId: string) => {
         await appEmployeeService.deleteEmployee(employeeId);
-        await refreshEmployees();
-    }, [refreshEmployees]);
+        setEmployees((current) => {
+            const next = current.filter((employee) => employee.id !== employeeId);
+            persistEmployees(next);
+            return next;
+        });
+    }, []);
 
     const value = useMemo<AppEmployeeContextValue>(() => {
         return {

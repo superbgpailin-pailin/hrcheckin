@@ -5,6 +5,7 @@ import { appAttendanceService } from '../services/appAttendanceService';
 import type { AttendanceEmployeeReportRow, AttendanceSummaryRecord, LatePenaltyRule } from '../types/app';
 import { downloadCsv } from '../utils/csv';
 import { dayKey, formatThaiDateTime } from '../utils/shiftUtils';
+import { ImageLightbox } from '../components/ImageLightbox';
 
 const buildDateRange = (from: string, to: string): string[] => {
     if (!from || !to || from > to) {
@@ -103,6 +104,7 @@ export const AppAttendance: React.FC = () => {
     const [fromDate, setFromDate] = useState(new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
     const [toDate, setToDate] = useState(new Date().toISOString().slice(0, 10));
     const [employeeId, setEmployeeId] = useState('all');
+    const [previewPhoto, setPreviewPhoto] = useState<{ src: string; alt: string } | null>(null);
 
     const load = async () => {
         setLoading(true);
@@ -159,6 +161,35 @@ export const AppAttendance: React.FC = () => {
         };
     }, [records]);
 
+    const recordSummaryByEmployee = useMemo(() => {
+        const map = new Map<string, {
+            records: AttendanceSummaryRecord[];
+            lateRecords: AttendanceSummaryRecord[];
+            checkInDaySet: Set<string>;
+            totalLateMinutes: number;
+        }>();
+
+        records.forEach((record) => {
+            const current = map.get(record.employeeId) || {
+                records: [],
+                lateRecords: [],
+                checkInDaySet: new Set<string>(),
+                totalLateMinutes: 0,
+            };
+
+            current.records.push(record);
+            current.checkInDaySet.add(dayKey(record.checkInAt));
+            if (record.lateMinutes > 0) {
+                current.lateRecords.push(record);
+                current.totalLateMinutes += record.lateMinutes;
+            }
+
+            map.set(record.employeeId, current);
+        });
+
+        return map;
+    }, [records]);
+
     const detailRows = useMemo<AttendanceEmployeeReportRow[]>(() => {
         const daysInRange = buildDateRange(fromDate, toDate);
         const totalDays = daysInRange.length;
@@ -168,12 +199,12 @@ export const AppAttendance: React.FC = () => {
 
         return targetEmployees
             .map((employee) => {
-                const employeeRecords = records.filter((record) => record.employeeId === employee.id);
-                const lateRecords = employeeRecords.filter((record) => record.lateMinutes > 0);
+                const summary = recordSummaryByEmployee.get(employee.id);
+                const employeeRecords = summary?.records || [];
+                const lateRecords = summary?.lateRecords || [];
+                const totalLateMinutes = summary?.totalLateMinutes || 0;
                 const onTimeCount = employeeRecords.length - lateRecords.length;
-                const totalLateMinutes = lateRecords.reduce((sum, record) => sum + record.lateMinutes, 0);
-                const checkInDaySet = new Set(employeeRecords.map((record) => dayKey(record.checkInAt)));
-                const missingDays = Math.max(0, totalDays - checkInDaySet.size);
+                const missingDays = Math.max(0, totalDays - (summary?.checkInDaySet.size || 0));
                 const leaveDays = employee.status === 'OnLeave' ? missingDays : 0;
                 const absentDays = employee.status === 'Active' ? missingDays : 0;
 
@@ -195,7 +226,7 @@ export const AppAttendance: React.FC = () => {
             })
             .filter((row) => row.employmentStatus !== 'Resigned')
             .sort((a, b) => a.employeeId.localeCompare(b.employeeId));
-    }, [config.lateRules, employeeId, employees, fromDate, records, toDate]);
+    }, [config.lateRules, employeeId, employees, fromDate, recordSummaryByEmployee, toDate]);
 
     const detailStats = useMemo(() => {
         return detailRows.reduce(
@@ -230,6 +261,7 @@ export const AppAttendance: React.FC = () => {
             status: record.status,
             late_minutes: record.lateMinutes,
             kiosk_id: record.kioskId,
+            photo_url: record.photoUrl,
         }));
 
         downloadCsv(`attendance_checkins_${fromDate}_${toDate}.csv`, rows);
@@ -369,6 +401,7 @@ export const AppAttendance: React.FC = () => {
                                     <th>เวลาสิ้นสุดกะ (ประมาณ)</th>
                                     <th>สถานะ</th>
                                     <th>สาย (นาที)</th>
+                                    <th>รูปยืนยัน</th>
                                     <th />
                                 </tr>
                             </thead>
@@ -389,6 +422,26 @@ export const AppAttendance: React.FC = () => {
                                         </td>
                                         <td>{record.lateMinutes}</td>
                                         <td>
+                                            {record.photoUrl ? (
+                                                <button
+                                                    type="button"
+                                                    className="image-preview-trigger attendance-selfie-trigger"
+                                                    onClick={() => setPreviewPhoto({
+                                                        src: record.photoUrl,
+                                                        alt: `${record.employeeId} check-in selfie`,
+                                                    })}
+                                                >
+                                                    <img
+                                                        src={record.photoUrl}
+                                                        alt={`${record.employeeId} check-in selfie`}
+                                                        className="attendance-selfie-thumb"
+                                                    />
+                                                </button>
+                                            ) : (
+                                                <div className="panel-muted">-</div>
+                                            )}
+                                        </td>
+                                        <td>
                                             <button
                                                 type="button"
                                                 className="btn-danger"
@@ -405,6 +458,14 @@ export const AppAttendance: React.FC = () => {
                     </div>
                 ) : null}
             </section>
+
+            {previewPhoto ? (
+                <ImageLightbox
+                    imageUrl={previewPhoto.src}
+                    alt={previewPhoto.alt}
+                    onClose={() => setPreviewPhoto(null)}
+                />
+            ) : null}
         </div>
     );
 };

@@ -15,7 +15,18 @@ export const AppDashboard: React.FC = () => {
     useEffect(() => {
         const load = async () => {
             setLoading(true);
-            const result = await appAttendanceService.listCheckIns(config.shifts, employees, config.lateGraceMinutes);
+            const today = new Date();
+            const from = new Date(today);
+            from.setDate(today.getDate() - 6);
+            const result = await appAttendanceService.listCheckIns(
+                config.shifts,
+                employees,
+                config.lateGraceMinutes,
+                {
+                    from: from.toISOString().slice(0, 10),
+                    to: today.toISOString().slice(0, 10),
+                },
+            );
             setRecords(result);
             setLoading(false);
         };

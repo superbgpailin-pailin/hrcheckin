@@ -140,6 +140,7 @@ export interface AttendanceSummaryRecord {
     status: CheckInStatus;
     source: 'QR';
     kioskId: string;
+    photoUrl: string;
 }
 
 export interface AttendanceEmployeeReportRow {

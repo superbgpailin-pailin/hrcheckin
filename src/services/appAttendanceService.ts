@@ -4,6 +4,7 @@ import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../t
 import { dayKey, estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils';
 
 const tableName = 'attendance';
+const attendanceSelectFields = 'id, employee_id, user_id, timestamp, check_in_time, created_at, status, shift_name, shift, site_id, site, kiosk_id, type, attendance_type, photo_url';
 const duplicateCheckInMessage = 'วันนี้เช็คอินแล้ว';
 const saveFailedMessage = 'บันทึกเช็คอินไม่สำเร็จบนเซิร์ฟเวอร์ กรุณาลองใหม่หรือติดต่อแอดมิน';
 
@@ -22,6 +23,7 @@ interface AttendanceRow {
     kiosk_id?: string | null;
     type?: string | null;
     attendance_type?: string | null;
+    photo_url?: string | null;
 }
 
 interface NormalizedAttendanceRow {
@@ -32,12 +34,22 @@ interface NormalizedAttendanceRow {
     shift_name: string | null;
     site_id: string | null;
     type: 'check_in' | 'check_out' | null;
+    photo_url: string | null;
 }
 
 interface AttendanceFilters {
     from?: string;
     to?: string;
     employeeId?: string;
+}
+
+interface AttendanceLoadOptions {
+    useCache?: boolean;
+}
+
+interface AttendanceCacheEntry {
+    savedAt: number;
+    rows: NormalizedAttendanceRow[];
 }
 
 const optionalInsertColumns = [
@@ -57,6 +69,60 @@ const optionalInsertColumns = [
     'timestamp',
     'check_in_time',
 ];
+
+const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v1';
+const ATTENDANCE_CACHE_TTL_MS = 30 * 1000;
+
+const attendanceCacheKey = (filters: AttendanceFilters): string => {
+    return [
+        ATTENDANCE_CACHE_PREFIX,
+        filters.from || '*',
+        filters.to || '*',
+        filters.employeeId || '*',
+    ].join(':');
+};
+
+const readAttendanceCache = (filters: AttendanceFilters): NormalizedAttendanceRow[] | null => {
+    try {
+        const raw = localStorage.getItem(attendanceCacheKey(filters));
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw) as AttendanceCacheEntry;
+        if (!parsed?.savedAt || !Array.isArray(parsed.rows)) {
+            return null;
+        }
+
+        if (Date.now() - parsed.savedAt > ATTENDANCE_CACHE_TTL_MS) {
+            localStorage.removeItem(attendanceCacheKey(filters));
+            return null;
+        }
+
+        return parsed.rows;
+    } catch {
+        return null;
+    }
+};
+
+const writeAttendanceCache = (filters: AttendanceFilters, rows: NormalizedAttendanceRow[]): void => {
+    const entry: AttendanceCacheEntry = {
+        savedAt: Date.now(),
+        rows,
+    };
+    localStorage.setItem(attendanceCacheKey(filters), JSON.stringify(entry));
+};
+
+const clearAttendanceCache = (): void => {
+    const keysToDelete: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith(ATTENDANCE_CACHE_PREFIX)) {
+            keysToDelete.push(key);
+        }
+    }
+    keysToDelete.forEach((key) => localStorage.removeItem(key));
+};
 
 const asText = (value: unknown): string => {
     if (typeof value === 'string') {
@@ -118,6 +184,7 @@ const normalizeAttendanceRow = (row: AttendanceRow): NormalizedAttendanceRow => 
         shift_name: shiftName,
         site_id: siteId,
         type,
+        photo_url: asText(row.photo_url) || null,
     };
 };
 
@@ -154,7 +221,7 @@ const shiftByNameOrId = (nameOrId: string, shifts: ShiftDefinition[]): ShiftDefi
 };
 
 const toSummary = (
-    row: Pick<NormalizedAttendanceRow, 'id' | 'employee_id' | 'timestamp' | 'status' | 'shift_name' | 'site_id'>,
+    row: Pick<NormalizedAttendanceRow, 'id' | 'employee_id' | 'timestamp' | 'status' | 'shift_name' | 'site_id' | 'photo_url'>,
     shifts: ShiftDefinition[],
     employeeMap: Map<string, AppEmployee>,
     graceMinutes: number,
@@ -180,6 +247,7 @@ const toSummary = (
         status: row.status || (lateMinutes > 0 ? 'Late' : 'On Time'),
         source: 'QR',
         kioskId: row.site_id || 'kiosk',
+        photoUrl: row.photo_url || '',
     };
 };
 
@@ -206,11 +274,23 @@ const shouldRetryWithoutTimestampFilter = (message: string): boolean => {
     return normalized.includes('timestamp') && normalized.includes('column');
 };
 
-const loadRowsFromSupabase = async (filters: AttendanceFilters): Promise<NormalizedAttendanceRow[]> => {
+const loadRowsFromSupabase = async (
+    filters: AttendanceFilters,
+    options: AttendanceLoadOptions = {},
+): Promise<NormalizedAttendanceRow[]> => {
+    const useCache = options.useCache ?? true;
+    if (useCache) {
+        const cached = readAttendanceCache(filters);
+        if (cached) {
+            return cached;
+        }
+    }
+
     const queryRows = async (withTimestampFilter: boolean): Promise<AttendanceRow[]> => {
         let query = supabase
             .from(tableName)
-            .select('*');
+            .select(attendanceSelectFields)
+            .order('timestamp', { ascending: false });
 
         if (filters.employeeId) {
             query = query.eq('employee_id', filters.employeeId);
@@ -244,12 +324,18 @@ const loadRowsFromSupabase = async (filters: AttendanceFilters): Promise<Normali
         rows = await queryRows(false);
     }
 
-    return rows
+    const normalizedRows = rows
         .map(normalizeAttendanceRow)
         .filter((row) => row.employee_id)
         .filter((row) => row.type !== 'check_out')
         .filter((row) => withinFilters(row, filters))
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    if (useCache) {
+        writeAttendanceCache(filters, normalizedRows);
+    }
+
+    return normalizedRows;
 };
 
 const extractMissingColumn = (message: string): string | null => {
@@ -324,13 +410,18 @@ export const appAttendanceService = {
         selectedShift: ShiftDefinition,
         kioskId: string,
         graceMinutes: number,
+        checkInPhotoUrl = '',
     ): Promise<AttendanceSummaryRecord> {
         const now = new Date();
         const nowIso = now.toISOString();
+        const todayKey = dayKeyBangkok(nowIso);
         const lateMinutes = lateMinutesForCheckIn(now, selectedShift, graceMinutes);
         const status: 'On Time' | 'Late' = lateMinutes > 0 ? 'Late' : 'On Time';
 
-        const existingRows = await loadRowsFromSupabase({ employeeId: employee.id }).catch(() => null);
+        const existingRows = await loadRowsFromSupabase(
+            { employeeId: employee.id, from: todayKey, to: todayKey },
+            { useCache: false },
+        ).catch(() => null);
         if (existingRows && hasDuplicateOnDay(existingRows, employee.id, nowIso)) {
             throw new Error(duplicateCheckInMessage);
         }
@@ -348,7 +439,7 @@ export const appAttendanceService = {
             site_name: 'QR Kiosk',
             lat: 0,
             lng: 0,
-            photo_url: '',
+            photo_url: checkInPhotoUrl || '',
             status,
             shift_name: selectedShift.id,
             shift: selectedShift.id,
@@ -364,6 +455,8 @@ export const appAttendanceService = {
             throw new Error(saveFailedMessage);
         }
 
+        clearAttendanceCache();
+
         const remoteRow: NormalizedAttendanceRow = {
             id: `REMOTE-${Date.now()}`,
             employee_id: employee.id,
@@ -372,6 +465,7 @@ export const appAttendanceService = {
             shift_name: selectedShift.id,
             site_id: kioskId,
             type: 'check_in',
+            photo_url: checkInPhotoUrl || '',
         };
 
         return toSummary(remoteRow, [selectedShift], new Map([[employee.id, employee]]), graceMinutes);
@@ -402,5 +496,7 @@ export const appAttendanceService = {
         if (error) {
             throw new Error(error.message);
         }
+
+        clearAttendanceCache();
     },
 };

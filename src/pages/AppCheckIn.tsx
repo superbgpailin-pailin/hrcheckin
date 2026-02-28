@@ -6,6 +6,7 @@ import { useAppLanguage } from '../context/AppLanguageContext';
 import { useAppSettings } from '../context/AppSettingsContext';
 import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../types/app';
 import { appAttendanceService } from '../services/appAttendanceService';
+import { appFileUploadService } from '../services/appFileUploadService';
 import { createQrToken, hasNonceBeenUsed, markNonceAsUsed, verifyQrToken } from '../utils/qrToken';
 import { formatThaiDateTime, getAvailableShifts } from '../utils/shiftUtils';
 
@@ -13,7 +14,20 @@ interface AppCheckInProps {
     onBack: () => void;
 }
 
-type CheckInStep = 'auth' | 'shift' | 'scan' | 'done';
+type CheckInStep = 'auth' | 'shift' | 'scan' | 'selfie' | 'done';
+
+interface PendingQrPayload {
+    kioskId: string;
+    nonce: string;
+    expiresAt: number;
+}
+
+const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> => {
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    const contentType = blob.type || 'image/jpeg';
+    return new File([blob], filename, { type: contentType });
+};
 
 const findEmployee = (employees: AppEmployee[], employeeId: string, pin: string): AppEmployee | null => {
     const target = employees.find((employee) => employee.id.trim().toUpperCase() === employeeId.trim().toUpperCase());
@@ -39,6 +53,7 @@ const TEXT = {
         stepAuth: 'ยืนยันตัวตน',
         stepShift: 'เลือกกะ',
         stepScan: 'สแกน QR',
+        stepSelfie: 'ถ่ายรูปยืนยัน',
         stepDone: 'เสร็จสิ้น',
         employeeId: 'รหัสพนักงาน',
         pin: 'PIN',
@@ -49,7 +64,16 @@ const TEXT = {
         backToAuth: 'ย้อนกลับ',
         openScanner: 'เปิดกล้องสแกน',
         scanHelp: 'สแกน QR จากหน้าจอ Kiosk เพื่อบันทึกเวลาเข้า (QR เปลี่ยนตลอด)',
+        selfieHelp: 'ถ่ายรูปตัวเองเพื่อยืนยันการเช็คอินอีกครั้ง',
+        selfieRequired: 'กรุณาถ่ายรูปตัวเองก่อนยืนยันเช็คอิน',
+        selfieCaptureError: 'ไม่สามารถถ่ายรูปได้ กรุณาลองใหม่',
+        qrExpired: 'QR หมดอายุแล้ว กรุณาสแกนใหม่',
         backToShift: 'ย้อนกลับ',
+        backToScan: 'ย้อนกลับสแกน',
+        takeSelfie: 'ถ่ายรูป',
+        retakeSelfie: 'ถ่ายใหม่',
+        confirmSelfieCheckIn: 'ยืนยันเช็คอิน',
+        confirming: 'กำลังบันทึก...',
         success: 'บันทึกสำเร็จ',
         checkInAt: 'เวลาเข้า',
         estimatedOut: 'เวลาสิ้นสุดกะ (ประมาณ)',
@@ -67,6 +91,7 @@ const TEXT = {
         stepAuth: 'ផ្ទៀងផ្ទាត់',
         stepShift: 'ជ្រើសវេន',
         stepScan: 'ស្កេន QR',
+        stepSelfie: 'ថតរូបបញ្ជាក់',
         stepDone: 'រួចរាល់',
         employeeId: 'លេខកូដបុគ្គលិក',
         pin: 'PIN',
@@ -77,7 +102,16 @@ const TEXT = {
         backToAuth: 'ត្រឡប់ក្រោយ',
         openScanner: 'បើកកាមេរ៉ាស្កេន',
         scanHelp: 'ស្កេន QR ពីអេក្រង់ Kiosk ដើម្បីចុះវត្តមាន',
+        selfieHelp: 'ថតរូបខ្លួនឯងដើម្បីបញ្ជាក់ការចុះវត្តមាន',
+        selfieRequired: 'សូមថតរូបខ្លួនឯងមុនពេលបញ្ជាក់ការចុះវត្តមាន',
+        selfieCaptureError: 'មិនអាចថតរូបបាន សូមព្យាយាមម្ដងទៀត',
+        qrExpired: 'QR ផុតកំណត់ សូមស្កេនម្ដងទៀត',
         backToShift: 'ត្រឡប់ក្រោយ',
+        backToScan: 'ត្រឡប់ទៅស្កេន',
+        takeSelfie: 'ថតរូប',
+        retakeSelfie: 'ថតសារឡើងវិញ',
+        confirmSelfieCheckIn: 'បញ្ជាក់ចុះវត្តមាន',
+        confirming: 'កំពុងរក្សាទុក...',
         success: 'បានរក្សាទុករួចរាល់',
         checkInAt: 'ម៉ោងចូល',
         estimatedOut: 'ពេលបញ្ចប់វេន (ប្រហែល)',
@@ -105,8 +139,12 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
     const [result, setResult] = useState<AttendanceSummaryRecord | null>(null);
     const [error, setError] = useState('');
     const [scannerOpen, setScannerOpen] = useState(false);
+    const [pendingQr, setPendingQr] = useState<PendingQrPayload | null>(null);
+    const [capturedSelfie, setCapturedSelfie] = useState('');
+    const [submitting, setSubmitting] = useState(false);
 
     const webcamRef = useRef<Webcam>(null);
+    const selfieWebcamRef = useRef<Webcam>(null);
     const processingRef = useRef(false);
 
     const availableShifts = useMemo(() => {
@@ -149,6 +187,8 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         setEmployee(target);
         setSelectedShiftId(preferredShift.id);
         setError('');
+        setPendingQr(null);
+        setCapturedSelfie('');
         setStep('shift');
     };
 
@@ -166,16 +206,12 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
             throw new Error('QR นี้ถูกใช้งานแล้ว');
         }
 
-        const record = await appAttendanceService.recordCheckIn(
-            employee,
-            selectedShift,
-            verified.payload.kioskId,
-            config.lateGraceMinutes,
-        );
-
-        markNonceAsUsed(verified.payload.nonce, verified.payload.expiresAt);
-        setResult(record);
-    }, [config.lateGraceMinutes, config.qrSecret, employee, selectedShift]);
+        setPendingQr({
+            kioskId: verified.payload.kioskId,
+            nonce: verified.payload.nonce,
+            expiresAt: verified.payload.expiresAt,
+        });
+    }, [config.qrSecret, employee, selectedShift]);
 
     useEffect(() => {
         if (!scannerOpen || !employee || !selectedShift) {
@@ -208,8 +244,9 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
             processingRef.current = true;
             void handleQrPayload(code.data)
                 .then(() => {
-                    setStep('done');
                     setScannerOpen(false);
+                    setStep('selfie');
+                    setCapturedSelfie('');
                     setError('');
                 })
                 .catch((scanError) => {
@@ -225,6 +262,64 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         };
     }, [employee, handleQrPayload, scannerOpen, selectedShift]);
 
+    const takeSelfie = () => {
+        const next = selfieWebcamRef.current?.getScreenshot();
+        if (!next) {
+            setError(t.selfieCaptureError);
+            return;
+        }
+
+        setCapturedSelfie(next);
+        setError('');
+    };
+
+    const confirmCheckInWithSelfie = async () => {
+        if (!employee || !selectedShift || !pendingQr) {
+            setError('QR ไม่ถูกต้อง');
+            return;
+        }
+
+        if (Date.now() > pendingQr.expiresAt) {
+            setError(t.qrExpired);
+            setPendingQr(null);
+            setCapturedSelfie('');
+            setStep('scan');
+            setScannerOpen(true);
+            return;
+        }
+
+        if (!capturedSelfie) {
+            setError(t.selfieRequired);
+            return;
+        }
+
+        setSubmitting(true);
+        setError('');
+
+        try {
+            const filename = `${employee.id}-${Date.now()}.jpg`;
+            const selfieFile = await dataUrlToFile(capturedSelfie, filename);
+            const selfieUrl = await appFileUploadService.uploadCheckInSelfie(selfieFile, employee.id);
+            const record = await appAttendanceService.recordCheckIn(
+                employee,
+                selectedShift,
+                pendingQr.kioskId,
+                config.lateGraceMinutes,
+                selfieUrl,
+            );
+
+            markNonceAsUsed(pendingQr.nonce, pendingQr.expiresAt);
+            setResult(record);
+            setPendingQr(null);
+            setCapturedSelfie('');
+            setStep('done');
+        } catch (submitError) {
+            setError(submitError instanceof Error ? submitError.message : 'เช็คอินไม่สำเร็จ');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     const restart = () => {
         setStep('auth');
         setEmployee(null);
@@ -234,6 +329,9 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         setResult(null);
         setError('');
         setScannerOpen(false);
+        setPendingQr(null);
+        setCapturedSelfie('');
+        setSubmitting(false);
     };
 
     return (
@@ -250,8 +348,17 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                 </div>
 
                 <div className="checkin-stepper">
-                    {[t.stepAuth, t.stepShift, t.stepScan, t.stepDone].map((title, index) => {
-                        const active = index <= (step === 'auth' ? 0 : step === 'shift' ? 1 : step === 'scan' ? 2 : 3);
+                    {[t.stepAuth, t.stepShift, t.stepScan, t.stepSelfie, t.stepDone].map((title, index) => {
+                        const currentStep = step === 'auth'
+                            ? 0
+                            : step === 'shift'
+                                ? 1
+                                : step === 'scan'
+                                    ? 2
+                                    : step === 'selfie'
+                                        ? 3
+                                        : 4;
+                        const active = index <= currentStep;
                         return <span key={title} className={active ? 'active' : ''}>{title}</span>;
                     })}
                 </div>
@@ -315,6 +422,8 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                                 className="btn-primary"
                                 disabled={!selectedShift}
                                 onClick={() => {
+                                    setPendingQr(null);
+                                    setCapturedSelfie('');
                                     setStep('scan');
                                     setScannerOpen(true);
                                 }}
@@ -352,6 +461,59 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                             >
                                 {t.backToShift}
                             </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                {step === 'selfie' ? (
+                    <div className="stack-form">
+                        <p className="form-help">{t.selfieHelp}</p>
+                        {capturedSelfie ? (
+                            <img src={capturedSelfie} alt="check-in selfie" className="checkin-selfie-preview" />
+                        ) : (
+                            <div className="scanner-frame">
+                                <Webcam
+                                    ref={selfieWebcamRef}
+                                    audio={false}
+                                    width="100%"
+                                    screenshotFormat="image/jpeg"
+                                    videoConstraints={{ facingMode: 'user' }}
+                                />
+                            </div>
+                        )}
+
+                        <div className="inline-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                            <button
+                                type="button"
+                                className="btn-muted"
+                                onClick={() => {
+                                    setPendingQr(null);
+                                    setCapturedSelfie('');
+                                    setStep('scan');
+                                    setScannerOpen(true);
+                                }}
+                                disabled={submitting}
+                            >
+                                {t.backToScan}
+                            </button>
+                            <div className="inline-actions" style={{ flexWrap: 'wrap' }}>
+                                <button
+                                    type="button"
+                                    className="btn-muted"
+                                    onClick={takeSelfie}
+                                    disabled={submitting}
+                                >
+                                    {capturedSelfie ? t.retakeSelfie : t.takeSelfie}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn-primary"
+                                    onClick={() => void confirmCheckInWithSelfie()}
+                                    disabled={!capturedSelfie || submitting}
+                                >
+                                    {submitting ? t.confirming : t.confirmSelfieCheckIn}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 ) : null}

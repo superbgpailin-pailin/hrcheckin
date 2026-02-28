@@ -39,4 +39,26 @@ export const appFileUploadService = {
 
         return fileToDataUrl(compressed);
     },
+
+    async uploadCheckInSelfie(file: File, employeeId: string): Promise<string> {
+        const compressed = await compressImage(file);
+        const ext = extensionFromMime(compressed.type || 'image/webp');
+        const safeId = employeeId.trim().toUpperCase() || 'UNKNOWN';
+        const path = `checkin/${safeId}/selfie/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+        const { error: uploadError } = await supabase
+            .storage
+            .from(bucket)
+            .upload(path, compressed, { upsert: false, contentType: compressed.type || 'image/webp' });
+
+        if (!uploadError) {
+            const publicUrlResult = supabase.storage.from(bucket).getPublicUrl(path);
+            const publicUrl = publicUrlResult.data.publicUrl;
+            if (publicUrl) {
+                return publicUrl;
+            }
+        }
+
+        return fileToDataUrl(compressed);
+    },
 };

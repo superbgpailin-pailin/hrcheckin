@@ -1,21 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useState } from 'react';
 import { AppEmployeeProvider } from './context/AppEmployeeContext';
 import { AppLanguageProvider } from './context/AppLanguageContext';
 import { AppSettingsProvider } from './context/AppSettingsContext';
 import { PortalAuthProvider, usePortalAuth } from './context/PortalAuthContext';
-import { AppShell } from './components/AppShell';
 import type { PortalPage } from './types/app';
-import { AppLanding } from './pages/AppLanding';
-import { AppCheckIn } from './pages/AppCheckIn';
-import { AppSelfProfile } from './pages/AppSelfProfile';
-import { AdminLoginPage } from './pages/AdminLoginPage';
-import { AppDashboard } from './pages/AppDashboard';
-import { AppAttendance } from './pages/AppAttendance';
-import { AppEmployees } from './pages/AppEmployees';
-import { AppProfileRequests } from './pages/AppProfileRequests';
-import { AppSettings } from './pages/AppSettings';
-import { AppKiosk } from './pages/AppKiosk';
-import { AppAdmins } from './pages/AppAdmins';
 import {
     buildAdminLoginHash,
     buildCheckInHash,
@@ -27,6 +15,19 @@ import {
     type AppRouteState,
     type LoginNext,
 } from './utils/routes';
+
+const AppShell = React.lazy(() => import('./components/AppShell').then((module) => ({ default: module.AppShell })));
+const AppLanding = React.lazy(() => import('./pages/AppLanding').then((module) => ({ default: module.AppLanding })));
+const AppCheckIn = React.lazy(() => import('./pages/AppCheckIn').then((module) => ({ default: module.AppCheckIn })));
+const AppSelfProfile = React.lazy(() => import('./pages/AppSelfProfile').then((module) => ({ default: module.AppSelfProfile })));
+const AdminLoginPage = React.lazy(() => import('./pages/AdminLoginPage').then((module) => ({ default: module.AdminLoginPage })));
+const AppDashboard = React.lazy(() => import('./pages/AppDashboard').then((module) => ({ default: module.AppDashboard })));
+const AppAttendance = React.lazy(() => import('./pages/AppAttendance').then((module) => ({ default: module.AppAttendance })));
+const AppEmployees = React.lazy(() => import('./pages/AppEmployees').then((module) => ({ default: module.AppEmployees })));
+const AppProfileRequests = React.lazy(() => import('./pages/AppProfileRequests').then((module) => ({ default: module.AppProfileRequests })));
+const AppSettings = React.lazy(() => import('./pages/AppSettings').then((module) => ({ default: module.AppSettings })));
+const AppKiosk = React.lazy(() => import('./pages/AppKiosk').then((module) => ({ default: module.AppKiosk })));
+const AppAdmins = React.lazy(() => import('./pages/AppAdmins').then((module) => ({ default: module.AppAdmins })));
 
 const hashForRoute = (route: AppRouteState): string => {
     if (route.view === 'landing') {
@@ -47,28 +48,24 @@ const hashForRoute = (route: AppRouteState): string => {
     return buildPortalHash(route.portalPage);
 };
 
-const AppContent: React.FC = () => {
+const AppLoadingFallback: React.FC = () => {
+    return (
+        <div className="auth-screen">
+            <div className="auth-card reveal-up">
+                <h2>Loading...</h2>
+                <p>Please wait.</p>
+            </div>
+        </div>
+    );
+};
+
+interface AppContentProps {
+    route: AppRouteState;
+    navigate: (next: AppRouteState) => void;
+}
+
+const AppContent: React.FC<AppContentProps> = ({ route, navigate }) => {
     const { portalUser, loginPortal, logoutPortal } = usePortalAuth();
-    const [route, setRoute] = useState<AppRouteState>(() => parseHashRoute(window.location.hash));
-
-    useEffect(() => {
-        const onHashChange = () => {
-            setRoute(parseHashRoute(window.location.hash));
-        };
-
-        window.addEventListener('hashchange', onHashChange);
-        return () => {
-            window.removeEventListener('hashchange', onHashChange);
-        };
-    }, []);
-
-    const navigate = useCallback((next: AppRouteState) => {
-        const targetHash = hashForRoute(next);
-        if (window.location.hash !== targetHash) {
-            window.location.hash = targetHash;
-        }
-        setRoute(next);
-    }, []);
 
     const openLanding = useCallback(() => {
         navigate({ view: 'landing', portalPage: 'dashboard', loginNext: 'dashboard' });
@@ -201,12 +198,44 @@ const AppContent: React.FC = () => {
 };
 
 function App() {
+    const [route, setRoute] = useState<AppRouteState>(() => parseHashRoute(window.location.hash));
+
+    useEffect(() => {
+        const onHashChange = () => {
+            setRoute(parseHashRoute(window.location.hash));
+        };
+
+        window.addEventListener('hashchange', onHashChange);
+        return () => {
+            window.removeEventListener('hashchange', onHashChange);
+        };
+    }, []);
+
+    const navigate = useCallback((next: AppRouteState) => {
+        const targetHash = hashForRoute(next);
+        if (window.location.hash !== targetHash) {
+            window.location.hash = targetHash;
+        }
+        setRoute(next);
+    }, []);
+
+    const settingsEnabled = route.view === 'checkin'
+        || route.view === 'employee-profile'
+        || route.view === 'kiosk'
+        || route.view === 'portal';
+    const employeesEnabled = route.view === 'checkin'
+        || route.view === 'employee-profile'
+        || (route.view === 'portal' && route.portalPage !== 'admins' && route.portalPage !== 'settings');
+    const portalSyncEnabled = route.view === 'portal' || route.view === 'kiosk';
+
     return (
         <AppLanguageProvider>
-            <AppSettingsProvider>
-                <AppEmployeeProvider>
-                    <PortalAuthProvider>
-                        <AppContent />
+            <AppSettingsProvider enabled={settingsEnabled}>
+                <AppEmployeeProvider enabled={employeesEnabled}>
+                    <PortalAuthProvider enabled={portalSyncEnabled}>
+                        <Suspense fallback={<AppLoadingFallback />}>
+                            <AppContent route={route} navigate={navigate} />
+                        </Suspense>
                     </PortalAuthProvider>
                 </AppEmployeeProvider>
             </AppSettingsProvider>

@@ -308,7 +308,12 @@ const deleteRemoteAccount = async (username: string): Promise<void> => {
 
 const PortalAuthContext = createContext<PortalAuthContextValue | undefined>(undefined);
 
-export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface PortalAuthProviderProps {
+    children: React.ReactNode;
+    enabled?: boolean;
+}
+
+export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children, enabled = true }) => {
     const [accounts, setAccounts] = useState<PortalAccount[]>(() => readStoredAccounts());
     const [portalUsername, setPortalUsername] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_CURRENT_USER));
 
@@ -359,8 +364,12 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }, []);
 
     useEffect(() => {
+        if (!enabled) {
+            return;
+        }
+
         void reloadAccounts();
-    }, [reloadAccounts]);
+    }, [enabled, reloadAccounts]);
 
     const portalUser = useMemo<PortalUser | null>(() => {
         if (!portalUsername) {
