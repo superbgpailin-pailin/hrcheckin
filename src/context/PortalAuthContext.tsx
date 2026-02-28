@@ -374,14 +374,8 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             }
 
             // Remote is the source of truth for passwords and admin account state.
-            // Merge: remote wins on password, local wins on display data until remote is fetched.
-            const remoteMap = new Map(remoteAccounts.map((a) => [normalizeUsername(a.username), a]));
-            const merged = dedupeAccounts(
-                localAccounts.map((local) => {
-                    const remote = remoteMap.get(normalizeUsername(local.username));
-                    return remote ? { ...local, ...remote } : local;
-                }),
-            );
+            // Merge: Combine local and remote. Dedupe will keep the last one (remote wins).
+            const merged = dedupeAccounts([...localAccounts, ...remoteAccounts]);
             setAccounts(merged);
             persistAccounts(merged);
         } catch (error) {
