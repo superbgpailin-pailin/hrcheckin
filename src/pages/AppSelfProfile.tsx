@@ -339,15 +339,11 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
         setNotice('');
         setError('');
         try {
-            await appEmployeeService.verifyEmployeePin(normalizedEmployeeId, sanitizedCurrentPin);
-            const existingEmployee = await appEmployeeService.getEmployeeById(normalizedEmployeeId);
-            if (!existingEmployee) {
-                throw new Error(t.employeeNotFound);
-            }
+            const existingEmployee = await appEmployeeService.verifyEmployeePin(normalizedEmployeeId, sanitizedCurrentPin);
 
             let effectivePin = sanitizedCurrentPin;
             if (shouldChangePin) {
-                await appEmployeeService.changeEmployeePin(normalizedEmployeeId, sanitizedCurrentPin, sanitizedNewPin);
+                await appEmployeeService.updateEmployeePin(normalizedEmployeeId, sanitizedNewPin);
                 effectivePin = sanitizedNewPin;
             }
 

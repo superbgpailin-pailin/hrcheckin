@@ -32,7 +32,6 @@ const tableName = 'employees';
 const employeeSelectFields = [
     'id',
     'role',
-    'photo_url',
     'first_name_th',
     'last_name_th',
     'first_name_en',
@@ -47,9 +46,6 @@ const employeeSelectFields = [
     'birth_date',
     'emergency_contact_name',
     'emergency_contact_phone',
-    'selfie_url',
-    'id_card_url',
-    'passport_url',
     'start_date',
     'default_shift_id',
 ].join(', ');
@@ -61,6 +57,11 @@ const legacyOptionalColumns = [
     'selfie_url',
     'id_card_url',
     'passport_url',
+];
+const employeeCacheKeys = [
+    'hrcheckin_employees_cache_v3',
+    'hrcheckin_employees_cache_v2',
+    'hrcheckin_employees_cache_v1',
 ];
 
 const sanitizePin = (value: string): string => value.replace(/\D/g, '').slice(0, 6);
@@ -81,6 +82,61 @@ const getErrorMessage = (error: unknown): string => {
     }
 
     return String(error || '');
+};
+
+const buildEmployeeAvatar = (employeeId: string): string => {
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(employeeId)}&background=334155&color=fff`;
+};
+
+const readCachedEmployees = (): AppEmployee[] => {
+    if (typeof localStorage === 'undefined') {
+        return [];
+    }
+
+    for (const key of employeeCacheKeys) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) {
+                continue;
+            }
+
+            const parsed = JSON.parse(raw) as Array<Partial<AppEmployee> & { id?: string }>;
+            if (!Array.isArray(parsed)) {
+                continue;
+            }
+
+            return parsed
+                .filter((employee): employee is Partial<AppEmployee> & { id: string } => typeof employee.id === 'string' && employee.id.length > 0)
+                .map((employee) => ({
+                    id: employee.id,
+                    role: normalizeEmployeeRole(typeof employee.role === 'string' ? employee.role : 'Employee'),
+                    firstNameTH: String(employee.firstNameTH || '-'),
+                    lastNameTH: String(employee.lastNameTH || '-'),
+                    firstNameEN: String(employee.firstNameEN || '-'),
+                    lastNameEN: String(employee.lastNameEN || '-'),
+                    nickname: String(employee.nickname || employee.id),
+                    position: String(employee.position || '-'),
+                    department: String(employee.department || '-'),
+                    status: normalizeEmployeeStatus(typeof employee.status === 'string' ? employee.status : 'Active'),
+                    photoUrl: String(employee.photoUrl || buildEmployeeAvatar(employee.id)),
+                    pin: String(employee.pin || '123456'),
+                    email: String(employee.email || ''),
+                    phoneNumber: String(employee.phoneNumber || ''),
+                    birthDate: String(employee.birthDate || ''),
+                    emergencyContactName: String(employee.emergencyContactName || ''),
+                    emergencyContactPhone: String(employee.emergencyContactPhone || ''),
+                    selfieUrl: String(employee.selfieUrl || ''),
+                    idCardUrl: String(employee.idCardUrl || ''),
+                    passportUrl: String(employee.passportUrl || ''),
+                    startDate: String(employee.startDate || new Date().toISOString().slice(0, 10)),
+                    defaultShiftId: employee.defaultShiftId as AppEmployee['defaultShiftId'],
+                }));
+        } catch {
+            continue;
+        }
+    }
+
+    return [];
 };
 
 const normalizeDateOrNull = (value: string | null | undefined): string | null => {
@@ -161,10 +217,9 @@ const toAppEmployee = (row: EmployeeRow): AppEmployee => {
 };
 
 const toPayload = (employee: AppEmployee): EmployeePayload => {
-    return {
+    const payload: EmployeePayload = {
         id: employee.id.trim().toUpperCase(),
         role: normalizeEmployeeRole(employee.role),
-        photo_url: employee.photoUrl,
         first_name_th: employee.firstNameTH,
         last_name_th: employee.lastNameTH,
         first_name_en: employee.firstNameEN,
@@ -179,12 +234,28 @@ const toPayload = (employee: AppEmployee): EmployeePayload => {
         birth_date: normalizeDateOrNull(employee.birthDate),
         emergency_contact_name: employee.emergencyContactName,
         emergency_contact_phone: employee.emergencyContactPhone,
-        selfie_url: employee.selfieUrl,
-        id_card_url: employee.idCardUrl,
-        passport_url: employee.passportUrl,
         start_date: normalizeDateOrToday(employee.startDate),
         default_shift_id: employee.defaultShiftId || null,
     };
+
+    const normalizedPhoto = employee.photoUrl.trim();
+    if (normalizedPhoto && !normalizedPhoto.includes('ui-avatars.com/api')) {
+        payload.photo_url = normalizedPhoto;
+    }
+
+    if (employee.selfieUrl.trim()) {
+        payload.selfie_url = employee.selfieUrl.trim();
+    }
+
+    if (employee.idCardUrl.trim()) {
+        payload.id_card_url = employee.idCardUrl.trim();
+    }
+
+    if (employee.passportUrl.trim()) {
+        payload.passport_url = employee.passportUrl.trim();
+    }
+
+    return payload;
 };
 
 const withoutKey = (source: EmployeePayload, key: string): EmployeePayload => {
@@ -318,6 +389,10 @@ export const appEmployeeService = {
             return rows.map(toAppEmployee);
         } catch (error) {
             const message = getErrorMessage(error);
+            const cachedEmployees = readCachedEmployees();
+            if (cachedEmployees.length > 0) {
+                return cachedEmployees.sort((a, b) => a.id.localeCompare(b.id));
+            }
             if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
                 throw new Error('ไม่สามารถเชื่อมต่อฐานข้อมูลพนักงานได้');
             }
@@ -385,26 +460,29 @@ export const appEmployeeService = {
             return null;
         }
 
-        try {
-            const { data, error } = await supabase
-                .from(tableName)
-                .select(employeeSelectFields)
-                .eq('id', normalized)
-                .maybeSingle();
+        const { data, error } = await supabase
+            .from(tableName)
+            .select(employeeSelectFields)
+            .eq('id', normalized)
+            .maybeSingle();
 
-            if (error) {
-                throw error;
+        if (error) {
+            const message = getErrorMessage(error);
+            const cachedEmployee = readCachedEmployees().find((employee) => employee.id.trim().toUpperCase() === normalized);
+            if (cachedEmployee) {
+                return cachedEmployee;
             }
-
-            if (!data) {
-                return null;
+            if (message === 'Failed to fetch' || message.toLowerCase().includes('fetch')) {
+                throw new Error('ไม่สามารถเชื่อมต่อฐานข้อมูลพนักงานได้');
             }
-
-            return toAppEmployee(data as unknown as EmployeeRow);
-        } catch {
-            const rows = await appEmployeeService.getEmployees();
-            return rows.find((employee) => employee.id.trim().toUpperCase() === normalized) || null;
+            throw new Error(message);
         }
+
+        if (!data) {
+            return null;
+        }
+
+        return toAppEmployee(data as unknown as EmployeeRow);
     },
 
     async verifyEmployeePin(id: string, pin: string): Promise<AppEmployee> {
