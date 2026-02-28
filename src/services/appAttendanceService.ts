@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { DEFAULT_SHIFTS } from '../data/appDefaults';
 import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../types/app';
-import { dayKey, estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils';
+import { estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils';
 import { getErrorMessage, isTransportError, withReadRetry } from '../utils/supabaseUtils';
 
 const tableName = 'attendance';
@@ -20,6 +20,7 @@ const attendanceSelectColumns = [
 const duplicateCheckInMessage = 'You already checked in today.';
 const saveFailedMessage = 'Check-in could not be saved on the server. Please try again or contact admin.';
 const readFailedMessage = 'Database server is slow or unavailable. Please try again.';
+const BANGKOK_UTC_OFFSET = '+07:00';
 
 
 
@@ -283,7 +284,7 @@ const withinFilters = (row: Pick<NormalizedAttendanceRow, 'employee_id' | 'times
         return false;
     }
 
-    const date = dayKey(row.timestamp);
+    const date = dayKeyBangkok(row.timestamp);
     if (filters.from && date < filters.from) {
         return false;
     }
@@ -343,6 +344,28 @@ const toSummary = (
 
 const dayKeyBangkok = (iso: string): string => {
     return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+};
+
+const shiftDateInputByDays = (dateInput: string, days: number): string => {
+    const [yearRaw, monthRaw, dayRaw] = dateInput.split('-');
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    const day = Number(dayRaw);
+
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+        return dateInput;
+    }
+
+    const shifted = new Date(Date.UTC(year, month - 1, day + days));
+    return shifted.toISOString().slice(0, 10);
+};
+
+const bangkokRangeStartIso = (dateInput: string): string => {
+    return `${dateInput}T00:00:00${BANGKOK_UTC_OFFSET}`;
+};
+
+const bangkokRangeEndExclusiveIso = (dateInput: string): string => {
+    return `${shiftDateInputByDays(dateInput, 1)}T00:00:00${BANGKOK_UTC_OFFSET}`;
 };
 
 const hasDuplicateOnDay = (
@@ -413,11 +436,11 @@ const loadRowsFromSupabase = async (
         }
 
         if (withTimestampFilter && filters.from) {
-            query = query.gte('timestamp', `${filters.from}T00:00:00`);
+            query = query.gte('timestamp', bangkokRangeStartIso(filters.from));
         }
 
         if (withTimestampFilter && filters.to) {
-            query = query.lte('timestamp', `${filters.to}T23:59:59`);
+            query = query.lt('timestamp', bangkokRangeEndExclusiveIso(filters.to));
         }
 
         const { data, error } = await withReadRetry(async () => {
