@@ -150,8 +150,7 @@ export const AppAttendance: React.FC = () => {
             await appAttendanceService.updateCheckIn(editingRecord.id, {
                 shift_name: shiftObj.id,
                 shift: shiftObj.id,
-                timestamp: newIso,
-                check_in_time: newIso
+                timestamp: newIso
             });
 
             setNotice('แก้ไขข้อมูลสำเร็จ');

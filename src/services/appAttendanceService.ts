@@ -614,7 +614,7 @@ export const appAttendanceService = {
         clearAttendanceCache();
     },
 
-    async updateCheckIn(recordId: string, updates: { shift_name?: string; shift?: string; timestamp?: string; check_in_time?: string; status?: string }): Promise<void> {
+    async updateCheckIn(recordId: string, updates: { shift_name?: string; shift?: string; timestamp?: string; status?: string }): Promise<void> {
         const { error } = await supabase
             .from(tableName)
             .update(updates)
