@@ -1,5 +1,4 @@
 import { supabase } from '../lib/supabaseClient';
-import { FALLBACK_EMPLOYEES } from '../data/appDefaults';
 import type { AppEmployee } from '../types/app';
 
 interface EmployeeRow {
@@ -228,25 +227,17 @@ const retryBulkUpsertWithLegacyPayload = async (payloads: EmployeePayload[], mes
 
 export const appEmployeeService = {
     async getEmployees(): Promise<AppEmployee[]> {
-        try {
-            const { data, error } = await supabase
-                .from(tableName)
-                .select('*')
-                .order('id', { ascending: true });
+        const { data, error } = await supabase
+            .from(tableName)
+            .select('*')
+            .order('id', { ascending: true });
 
-            if (error) {
-                throw error;
-            }
-
-            const rows = (data as EmployeeRow[]) || [];
-            if (rows.length === 0) {
-                return FALLBACK_EMPLOYEES;
-            }
-
-            return rows.map(toAppEmployee);
-        } catch {
-            return FALLBACK_EMPLOYEES;
+        if (error) {
+            throw new Error(error.message);
         }
+
+        const rows = (data as EmployeeRow[]) || [];
+        return rows.map(toAppEmployee);
     },
 
     async upsertEmployee(employee: AppEmployee): Promise<void> {

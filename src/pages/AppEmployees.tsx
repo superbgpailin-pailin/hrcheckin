@@ -83,6 +83,33 @@ interface EmployeeFieldOptions {
     statuses: string[];
 }
 
+const buildEmployeeDisplayName = (employee: AppEmployee): string => {
+    const nickname = employee.nickname.trim();
+    if (nickname) {
+        return nickname;
+    }
+
+    const thaiName = `${employee.firstNameTH} ${employee.lastNameTH}`.replace(/\s+/g, ' ').trim();
+    if (thaiName && thaiName !== '-') {
+        return thaiName;
+    }
+
+    const englishName = `${employee.firstNameEN} ${employee.lastNameEN}`.replace(/\s+/g, ' ').trim();
+    if (englishName && englishName !== '-') {
+        return englishName;
+    }
+
+    return employee.id;
+};
+
+const isEmployeeProfileIncomplete = (employee: AppEmployee): boolean => {
+    return !employee.nickname.trim()
+        && !employee.firstNameTH.trim()
+        && !employee.lastNameTH.trim()
+        && !employee.firstNameEN.trim()
+        && !employee.lastNameEN.trim();
+};
+
 const createNewEmployee = (
     id: string,
     status: AppEmployee['status'] = 'Active',
@@ -460,7 +487,7 @@ const EmployeeViewer: React.FC<EmployeeViewerProps> = ({ employee, onClose }) =>
 };
 
 export const AppEmployees: React.FC = () => {
-    const { employees, saveEmployee, saveEmployees, deleteEmployee } = useAppEmployees();
+    const { employees, loading, error, saveEmployee, saveEmployees, deleteEmployee } = useAppEmployees();
     const { config } = useAppSettings();
 
     const [query, setQuery] = useState('');
@@ -508,7 +535,8 @@ export const AppEmployees: React.FC = () => {
 
         return employees.filter((employee) => {
             const fullName = `${employee.firstNameTH} ${employee.lastNameTH} ${employee.firstNameEN} ${employee.lastNameEN}`.toLowerCase();
-            return employee.id.toLowerCase().includes(normalized) || fullName.includes(normalized);
+            const nickname = employee.nickname.toLowerCase();
+            return employee.id.toLowerCase().includes(normalized) || fullName.includes(normalized) || nickname.includes(normalized);
         });
     }, [employees, query]);
 
@@ -623,6 +651,8 @@ export const AppEmployees: React.FC = () => {
                 </div>
 
                 {bulkCreateNotice ? <p className="panel-muted" style={{ marginTop: '0.6rem' }}>{bulkCreateNotice}</p> : null}
+                {loading ? <p className="panel-muted" style={{ marginTop: '0.6rem' }}>กำลังโหลดข้อมูลพนักงาน...</p> : null}
+                {error ? <div className="form-error">{error}</div> : null}
             </section>
 
             <section className="panel table-panel">
@@ -643,7 +673,10 @@ export const AppEmployees: React.FC = () => {
                                 <tr key={employee.id}>
                                     <td>{employee.id}</td>
                                     <td>
-                                        <strong>{employee.nickname.trim() || '-'}</strong>
+                                        <strong>{buildEmployeeDisplayName(employee)}</strong>
+                                        {isEmployeeProfileIncomplete(employee) ? (
+                                            <div className="panel-muted">ยังไม่ได้กรอกข้อมูลพนักงาน</div>
+                                        ) : null}
                                     </td>
                                     <td>{employee.department}</td>
                                     <td>{employee.position}</td>
