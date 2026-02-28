@@ -367,8 +367,9 @@ const loadRowsFromSupabase = async (
         }
 
         // Filter check_in only at the database level to reduce bandwidth
+        // Use .or to ensure we don't accidentally filter out legacy rows where type is null
         if (selectColumns.includes('type')) {
-            query = query.neq('type', 'check_out');
+            query = query.or('type.neq.check_out,type.is.null');
         }
 
         if (withTimestampFilter && filters.from) {
