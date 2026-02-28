@@ -4,7 +4,23 @@ import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../t
 import { dayKey, estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils';
 
 const tableName = 'attendance';
-const attendanceSelectFields = 'id, employee_id, user_id, timestamp, check_in_time, created_at, status, shift_name, shift, site_id, site, kiosk_id, type, attendance_type, photo_url';
+const attendanceSelectColumns = [
+    'id',
+    'employee_id',
+    'user_id',
+    'timestamp',
+    'check_in_time',
+    'created_at',
+    'status',
+    'shift_name',
+    'shift',
+    'site_id',
+    'site',
+    'kiosk_id',
+    'type',
+    'attendance_type',
+    'photo_url',
+];
 const duplicateCheckInMessage = 'วันนี้เช็คอินแล้ว';
 const saveFailedMessage = 'บันทึกเช็คอินไม่สำเร็จบนเซิร์ฟเวอร์ กรุณาลองใหม่หรือติดต่อแอดมิน';
 
@@ -72,6 +88,8 @@ const optionalInsertColumns = [
 
 const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v1';
 const ATTENDANCE_CACHE_TTL_MS = 30 * 1000;
+const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v1';
+let resolvedAttendanceSelectColumns = [...attendanceSelectColumns];
 
 const attendanceCacheKey = (filters: AttendanceFilters): string => {
     return [
@@ -105,12 +123,44 @@ const readAttendanceCache = (filters: AttendanceFilters): NormalizedAttendanceRo
     }
 };
 
+const readAttendanceSelectColumnsCache = (): string[] | null => {
+    try {
+        const raw = localStorage.getItem(ATTENDANCE_SELECT_COLUMNS_CACHE_KEY);
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw) as string[];
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+            return null;
+        }
+
+        return parsed.filter((value): value is string => typeof value === 'string' && value.length > 0);
+    } catch {
+        return null;
+    }
+};
+
+const writeAttendanceSelectColumnsCache = (columns: string[]): void => {
+    resolvedAttendanceSelectColumns = [...columns];
+
+    try {
+        localStorage.setItem(ATTENDANCE_SELECT_COLUMNS_CACHE_KEY, JSON.stringify(columns));
+    } catch {
+        // Ignore cache write failures. Query will still work with the in-memory list.
+    }
+};
+
 const writeAttendanceCache = (filters: AttendanceFilters, rows: NormalizedAttendanceRow[]): void => {
     const entry: AttendanceCacheEntry = {
         savedAt: Date.now(),
         rows,
     };
-    localStorage.setItem(attendanceCacheKey(filters), JSON.stringify(entry));
+    try {
+        localStorage.setItem(attendanceCacheKey(filters), JSON.stringify(entry));
+    } catch {
+        // Ignore cache write failures. The live query result is already available.
+    }
 };
 
 const clearAttendanceCache = (): void => {
@@ -274,11 +324,31 @@ const shouldRetryWithoutTimestampFilter = (message: string): boolean => {
     return normalized.includes('timestamp') && normalized.includes('column');
 };
 
+const removeMissingSelectColumn = (
+    columns: string[],
+    message: string,
+): { nextColumns: string[]; removedAny: boolean } => {
+    const discoveredColumn = extractMissingColumn(message);
+    if (!discoveredColumn || !columns.includes(discoveredColumn)) {
+        return { nextColumns: columns, removedAny: false };
+    }
+
+    return {
+        nextColumns: columns.filter((column) => column !== discoveredColumn),
+        removedAny: true,
+    };
+};
+
 const loadRowsFromSupabase = async (
     filters: AttendanceFilters,
     options: AttendanceLoadOptions = {},
 ): Promise<NormalizedAttendanceRow[]> => {
     const useCache = options.useCache ?? true;
+    const cachedSelectColumns = readAttendanceSelectColumnsCache();
+    if (cachedSelectColumns?.length) {
+        resolvedAttendanceSelectColumns = cachedSelectColumns;
+    }
+
     if (useCache) {
         const cached = readAttendanceCache(filters);
         if (cached) {
@@ -289,7 +359,7 @@ const loadRowsFromSupabase = async (
     const queryRows = async (withTimestampFilter: boolean): Promise<AttendanceRow[]> => {
         let query = supabase
             .from(tableName)
-            .select(attendanceSelectFields)
+            .select(selectColumns.join(', '))
             .order('timestamp', { ascending: false });
 
         if (filters.employeeId) {
@@ -313,15 +383,30 @@ const loadRowsFromSupabase = async (
     };
 
     let rows: AttendanceRow[] = [];
+    let selectColumns = [...resolvedAttendanceSelectColumns];
+    let withTimestampFilter = true;
 
-    try {
-        rows = await queryRows(true);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error || '');
-        if (!shouldRetryWithoutTimestampFilter(message)) {
+    for (let attempt = 0; attempt < attendanceSelectColumns.length + 2; attempt += 1) {
+        try {
+            rows = await queryRows(withTimestampFilter);
+            writeAttendanceSelectColumnsCache(selectColumns);
+            break;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error || '');
+            const selectFallback = removeMissingSelectColumn(selectColumns, message);
+
+            if (selectFallback.removedAny && selectFallback.nextColumns.length > 0) {
+                selectColumns = selectFallback.nextColumns;
+                continue;
+            }
+
+            if (withTimestampFilter && shouldRetryWithoutTimestampFilter(message)) {
+                withTimestampFilter = false;
+                continue;
+            }
+
             throw error;
         }
-        rows = await queryRows(false);
     }
 
     const normalizedRows = rows
@@ -478,13 +563,8 @@ export const appAttendanceService = {
         filters: AttendanceFilters = {},
     ): Promise<AttendanceSummaryRecord[]> {
         const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
-
-        try {
-            const remoteRows = await loadRowsFromSupabase(filters);
-            return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
-        } catch {
-            return [];
-        }
+        const remoteRows = await loadRowsFromSupabase(filters);
+        return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
     },
 
     async deleteCheckIn(recordId: string): Promise<void> {
@@ -500,3 +580,4 @@ export const appAttendanceService = {
         clearAttendanceCache();
     },
 };
+
