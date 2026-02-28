@@ -1,11 +1,11 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Webcam from 'react-webcam';
 import jsQR from 'jsqr';
-import { useAppEmployees } from '../context/AppEmployeeContext';
 import { useAppLanguage } from '../context/AppLanguageContext';
 import { useAppSettings } from '../context/AppSettingsContext';
 import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../types/app';
 import { appAttendanceService } from '../services/appAttendanceService';
+import { appEmployeeService } from '../services/appEmployeeService';
 import { appFileUploadService } from '../services/appFileUploadService';
 import { createQrToken, hasNonceBeenUsed, markNonceAsUsed, verifyQrToken } from '../utils/qrToken';
 import { formatThaiDateTime, getAvailableShifts } from '../utils/shiftUtils';
@@ -29,23 +29,6 @@ const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> =
     return new File([blob], filename, { type: contentType });
 };
 
-const findEmployee = (employees: AppEmployee[], employeeId: string, pin: string): AppEmployee | null => {
-    const target = employees.find((employee) => employee.id.trim().toUpperCase() === employeeId.trim().toUpperCase());
-    if (!target) {
-        return null;
-    }
-
-    if (target.pin !== pin) {
-        return null;
-    }
-
-    if (target.status !== 'Active') {
-        return null;
-    }
-
-    return target;
-};
-
 const TEXT = {
     th: {
         title: 'Self Check-in',
@@ -57,7 +40,7 @@ const TEXT = {
         stepDone: 'เสร็จสิ้น',
         employeeId: 'รหัสพนักงาน',
         pin: 'PIN',
-        loadingEmployees: 'กำลังโหลดข้อมูลพนักงาน...',
+        checkingIdentity: 'กำลังตรวจสอบข้อมูลพนักงาน...',
         back: 'กลับ',
         next: 'ถัดไป',
         selectShift: 'เลือกกะทำงาน',
@@ -95,7 +78,7 @@ const TEXT = {
         stepDone: 'រួចរាល់',
         employeeId: 'លេខកូដបុគ្គលិក',
         pin: 'PIN',
-        loadingEmployees: 'កំពុងផ្ទុកទិន្នន័យបុគ្គលិក...',
+        checkingIdentity: 'កំពុងផ្ទៀងផ្ទាត់ព័ត៌មានបុគ្គលិក...',
         back: 'ត្រឡប់',
         next: 'បន្ទាប់',
         selectShift: 'ជ្រើសវេនការងារ',
@@ -128,7 +111,6 @@ const TEXT = {
 export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
     const { language, toggleLanguage } = useAppLanguage();
     const t = TEXT[language];
-    const { employees, loading } = useAppEmployees();
     const { config } = useAppSettings();
 
     const [step, setStep] = useState<CheckInStep>('auth');
@@ -141,6 +123,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
     const [scannerOpen, setScannerOpen] = useState(false);
     const [pendingQr, setPendingQr] = useState<PendingQrPayload | null>(null);
     const [capturedSelfie, setCapturedSelfie] = useState('');
+    const [authenticating, setAuthenticating] = useState(false);
     const [submitting, setSubmitting] = useState(false);
 
     const webcamRef = useRef<Webcam>(null);
@@ -167,29 +150,36 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
         return createQrToken('preview-kiosk', config.qrSecret, config.qrTokenLifetimeSeconds);
     }, [config.qrSecret, config.qrTokenLifetimeSeconds, scannerOpen]);
 
-    const submitIdentity = (event: React.FormEvent) => {
+    const submitIdentity = async (event: React.FormEvent) => {
         event.preventDefault();
-        const target = findEmployee(employees, employeeId, pin);
-
-        if (!target) {
-            setError(t.invalidAuth);
-            return;
-        }
-
-        const shiftsForEmployee = getAvailableShifts(new Date(), target.role, config);
-        if (shiftsForEmployee.length === 0) {
-            setError(t.noShift);
-            return;
-        }
-
-        const preferredShift = shiftsForEmployee.find((shift) => shift.id === target.defaultShiftId) || shiftsForEmployee[0];
-
-        setEmployee(target);
-        setSelectedShiftId(preferredShift.id);
         setError('');
-        setPendingQr(null);
-        setCapturedSelfie('');
-        setStep('shift');
+        setAuthenticating(true);
+
+        try {
+            const target = await appEmployeeService.verifyEmployeePin(employeeId, pin);
+            if (target.status !== 'Active') {
+                setError(t.invalidAuth);
+                return;
+            }
+
+            const shiftsForEmployee = getAvailableShifts(new Date(), target.role, config);
+            if (shiftsForEmployee.length === 0) {
+                setError(t.noShift);
+                return;
+            }
+
+            const preferredShift = shiftsForEmployee.find((shift) => shift.id === target.defaultShiftId) || shiftsForEmployee[0];
+
+            setEmployee(target);
+            setSelectedShiftId(preferredShift.id);
+            setPendingQr(null);
+            setCapturedSelfie('');
+            setStep('shift');
+        } catch {
+            setError(t.invalidAuth);
+        } finally {
+            setAuthenticating(false);
+        }
     };
 
     const handleQrPayload = useCallback(async (raw: string): Promise<void> => {
@@ -382,11 +372,11 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                             placeholder="******"
                         />
 
-                        {loading ? <div className="form-help">{t.loadingEmployees}</div> : null}
+                        {authenticating ? <div className="form-help">{t.checkingIdentity}</div> : null}
 
                         <div className="inline-actions">
                             <button type="button" className="btn-muted" onClick={onBack}>{t.back}</button>
-                            <button type="submit" className="btn-primary">{t.next}</button>
+                            <button type="submit" className="btn-primary" disabled={authenticating}>{t.next}</button>
                         </div>
                     </form>
                 ) : null}

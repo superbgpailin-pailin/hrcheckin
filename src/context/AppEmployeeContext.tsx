@@ -16,7 +16,69 @@ interface AppEmployeeContextValue {
 const AppEmployeeContext = createContext<AppEmployeeContextValue | undefined>(undefined);
 
 const LEGACY_EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v1';
-const EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v2';
+const PREVIOUS_EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v2';
+const EMPLOYEES_CACHE_KEY = 'hrcheckin_employees_cache_v3';
+
+interface CachedEmployee {
+    id: string;
+    role: AppEmployee['role'];
+    firstNameTH: string;
+    lastNameTH: string;
+    firstNameEN: string;
+    lastNameEN: string;
+    nickname: string;
+    position: string;
+    department: string;
+    status: AppEmployee['status'];
+    pin: string;
+}
+
+const buildEmployeeAvatar = (employeeId: string): string => {
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(employeeId)}&background=334155&color=fff`;
+};
+
+const toCachedEmployee = (employee: AppEmployee): CachedEmployee => {
+    return {
+        id: employee.id,
+        role: employee.role,
+        firstNameTH: employee.firstNameTH,
+        lastNameTH: employee.lastNameTH,
+        firstNameEN: employee.firstNameEN,
+        lastNameEN: employee.lastNameEN,
+        nickname: employee.nickname,
+        position: employee.position,
+        department: employee.department,
+        status: employee.status,
+        pin: employee.pin,
+    };
+};
+
+const toAppEmployeeFromCache = (employee: CachedEmployee): AppEmployee => {
+    return {
+        id: employee.id,
+        role: employee.role,
+        firstNameTH: employee.firstNameTH,
+        lastNameTH: employee.lastNameTH,
+        firstNameEN: employee.firstNameEN,
+        lastNameEN: employee.lastNameEN,
+        nickname: employee.nickname,
+        position: employee.position,
+        department: employee.department,
+        status: employee.status,
+        photoUrl: buildEmployeeAvatar(employee.id),
+        pin: employee.pin,
+        email: '',
+        phoneNumber: '',
+        birthDate: '',
+        emergencyContactName: '',
+        emergencyContactPhone: '',
+        selfieUrl: '',
+        idCardUrl: '',
+        passportUrl: '',
+        startDate: new Date().toISOString().slice(0, 10),
+        defaultShiftId: undefined,
+    };
+};
 
 const sortEmployeesById = (items: AppEmployee[]): AppEmployee[] => {
     return [...items].sort((a, b) => a.id.localeCompare(b.id));
@@ -29,15 +91,34 @@ const readStoredEmployees = (): AppEmployee[] => {
             return [];
         }
 
-        const parsed = JSON.parse(raw) as AppEmployee[];
-        return Array.isArray(parsed) ? sortEmployeesById(parsed) : [];
+        const parsed = JSON.parse(raw) as Array<AppEmployee | CachedEmployee>;
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+
+        return sortEmployeesById(parsed.map((employee) => {
+            if ('photoUrl' in employee && 'email' in employee) {
+                return employee as AppEmployee;
+            }
+
+            return toAppEmployeeFromCache(employee as CachedEmployee);
+        }));
     } catch {
         return [];
     }
 };
 
 const persistEmployees = (items: AppEmployee[]): void => {
-    localStorage.setItem(EMPLOYEES_CACHE_KEY, JSON.stringify(sortEmployeesById(items)));
+    try {
+        const cachedItems = sortEmployeesById(items).map(toCachedEmployee);
+        localStorage.setItem(EMPLOYEES_CACHE_KEY, JSON.stringify(cachedItems));
+    } catch {
+        try {
+            localStorage.removeItem(EMPLOYEES_CACHE_KEY);
+        } catch {
+            // Ignore storage failures. Cache is optional.
+        }
+    }
 };
 
 const mergeEmployees = (current: AppEmployee[], nextItems: AppEmployee[]): AppEmployee[] => {
@@ -81,6 +162,7 @@ export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ childr
 
     useEffect(() => {
         localStorage.removeItem(LEGACY_EMPLOYEES_CACHE_KEY);
+        localStorage.removeItem(PREVIOUS_EMPLOYEES_CACHE_KEY);
     }, []);
 
     useEffect(() => {
