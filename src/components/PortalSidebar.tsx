@@ -14,6 +14,7 @@ interface PortalSidebarProps {
 const MENU: Array<{ page: PortalPage; icon: string; label: string; masterOnly?: boolean }> = [
     { page: 'dashboard', icon: '📊', label: 'ภาพรวม' },
     { page: 'attendance', icon: '🕒', label: 'รายการเช็คอิน' },
+    { page: 'reports', icon: 'R', label: 'รายงานสรุป' },
     { page: 'employees', icon: '👥', label: 'พนักงาน' },
     { page: 'requests', icon: '🧾', label: 'คำขอพนักงาน' },
     { page: 'settings', icon: '⚙️', label: 'ตั้งค่า' },

@@ -8,6 +8,7 @@ export type ShiftId =
 export type PortalPage =
     | 'dashboard'
     | 'attendance'
+    | 'reports'
     | 'employees'
     | 'requests'
     | 'settings'

@@ -14,6 +14,7 @@ const DEFAULT_PORTAL_PAGE: PortalPage = 'dashboard';
 const VALID_PAGES = new Set<PortalPage>([
     'dashboard',
     'attendance',
+    'reports',
     'employees',
     'requests',
     'settings',

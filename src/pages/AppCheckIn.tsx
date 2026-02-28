@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Webcam from 'react-webcam';
 import jsQR from 'jsqr';
 import { useAppLanguage } from '../context/AppLanguageContext';
@@ -26,78 +26,80 @@ const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> =
 const TEXT = {
     th: {
         title: 'Self Check-in',
-        subtitle: 'ŧ�������Ẻ�᡹ QR (���������ҷ�)',
-        stepAuth: '�׹�ѹ��ǵ�',
-        stepShift: '���͡��',
-        stepSelfie: '�����ٻ�׹�ѹ',
-        stepScan: '�᡹ QR',
-        stepDone: '�������',
-        employeeId: '���ʾ�ѡ�ҹ',
+        subtitle: 'ลงเวลาเข้าแบบสแกน QR (ไม่มีเช็คเอาท์)',
+        stepAuth: 'ยืนยันตัวตน',
+        stepShift: 'เลือกกะ',
+        stepSelfie: 'ถ่ายรูปยืนยัน',
+        stepScan: 'สแกน QR',
+        stepDone: 'เสร็จสิ้น',
+        employeeId: 'รหัสพนักงาน',
         pin: 'PIN',
-        checkingIdentity: '���ѧ��Ǩ�ͺ�����ž�ѡ�ҹ...',
-        back: '��Ѻ',
-        next: '�Ѵ�',
-        selectShift: '���͡�зӧҹ',
-        backToAuth: '��͹��Ѻ',
-        goToSelfie: '仢�鹵͹�����ٻ',
-        goToScan: '��᡹ QR',
-        scanHelp: '�᡹ QR �ҡ˹�Ҩ� Kiosk ���ͺѹ�֡������� (QR ����¹��ʹ)',
-        selfieHelp: '�����ٻ����ͧ��͹ ���Ǩ֧�᡹ QR �����׹�ѹ������Թ',
-        selfieRequired: '��سҶ����ٻ����ͧ��͹�������鹵͹�᡹ QR',
-        selfieCaptureError: '�������ö�����ٻ�� ��س��ͧ����',
-        backToShift: '��͹��Ѻ',
-        backToSelfie: '��͹��Ѻ�����ٻ',
-        takeSelfie: '�����ٻ',
-        retakeSelfie: '��������',
-        scanToCheckIn: '���᡹ QR �������Թ',
-        confirming: '���ѧ�ѹ�֡...',
-        success: '�ѹ�֡�����',
-        checkInAt: '�������',
-        estimatedOut: '��������ش�� (����ҳ)',
-        status: 'ʶҹ�',
-        shift: '��',
-        home: '��Ѻ˹����ѡ',
-        nextPerson: '���Թ���Ѵ�',
-        invalidAuth: '���ʾ�ѡ�ҹ���� PIN ���١��ͧ ���ͺѭ����� Active',
-        noShift: '�ѧ����աз��͹حҵ����Ѻ�������',
+        checkingIdentity: 'กำลังตรวจสอบข้อมูลพนักงาน...',
+        back: 'กลับ',
+        next: 'ถัดไป',
+        selectShift: 'เลือกกะทำงาน',
+        backToAuth: 'ย้อนกลับ',
+        goToSelfie: 'ไปขั้นตอนถ่ายรูป',
+        goToScan: 'ไปสแกน QR',
+        scanHelp: 'สแกน QR จากหน้าจอ Kiosk เพื่อบันทึกเวลาเข้า (QR เปลี่ยนตลอด)',
+        selfieHelp: 'ถ่ายรูปตัวเองก่อน แล้วจึงสแกน QR เพื่อยืนยันการเช็คอิน',
+        selfieRequired: 'กรุณาถ่ายรูปตัวเองก่อนเข้าสู่ขั้นตอนสแกน QR',
+        selfieCaptureError: 'ไม่สามารถถ่ายรูปได้ กรุณาลองใหม่',
+        qrExpired: 'QR หมดอายุแล้ว กรุณาสแกนใหม่',
+        backToShift: 'ย้อนกลับ',
+        backToSelfie: 'ย้อนกลับถ่ายรูป',
+        takeSelfie: 'ถ่ายรูป',
+        retakeSelfie: 'ถ่ายใหม่',
+        scanToCheckIn: 'รอสแกน QR เพื่อเช็คอิน',
+        confirming: 'กำลังบันทึก...',
+        success: 'บันทึกสำเร็จ',
+        checkInAt: 'เวลาเข้า',
+        estimatedOut: 'เวลาสิ้นสุดกะ (ประมาณ)',
+        status: 'สถานะ',
+        shift: 'กะ',
+        home: 'กลับหน้าหลัก',
+        nextPerson: 'เช็คอินคนถัดไป',
+        invalidAuth: 'รหัสพนักงานหรือ PIN ไม่ถูกต้อง หรือบัญชีไม่ Active',
+        noShift: 'ยังไม่มีกะที่อนุญาตสำหรับผู้ใช้นี้',
         langBtn: 'KH',
     },
     km: {
-        title: '????????????????????',
-        subtitle: '????? QR ???????????????? (?????? Check-out)',
-        stepAuth: '???????????',
-        stepShift: '????????',
-        stepSelfie: '????????????',
-        stepScan: '????? QR',
-        stepDone: '???????',
-        employeeId: '??????????????',
+        title: 'ចុះវត្តមានដោយខ្លួនឯង',
+        subtitle: 'ស្កេន QR ដើម្បីចុះវត្តមាន (មិនមាន Check-out)',
+        stepAuth: 'ផ្ទៀងផ្ទាត់',
+        stepShift: 'ជ្រើសវេន',
+        stepSelfie: 'ថតរូបបញ្ជាក់',
+        stepScan: 'ស្កេន QR',
+        stepDone: 'រួចរាល់',
+        employeeId: 'លេខកូដបុគ្គលិក',
         pin: 'PIN',
-        checkingIdentity: '???????????????????????????????...',
-        back: '??????',
-        next: '???????',
-        selectShift: '??????????????',
-        backToAuth: '???????????',
-        goToSelfie: '???????',
-        goToScan: '??????? QR',
-        scanHelp: '????? QR ????????? Kiosk ????????????????',
-        selfieHelp: '??????????????? ????????????????? QR ??????????????????????????',
-        selfieRequired: '???????????????????????????? QR',
-        selfieCaptureError: '?????????????? ?????????????????',
-        backToShift: '???????????',
-        backToSelfie: '?????????????',
-        takeSelfie: '?????',
-        retakeSelfie: '???????????',
-        scanToCheckIn: '??????????? QR ????????????????',
-        confirming: '?????????????...',
-        success: '??????????????????',
-        checkInAt: '???????',
-        estimatedOut: '???????????? (??????)',
-        status: '????????',
-        shift: '???',
-        home: '????????????',
-        nextPerson: '???????????????',
-        invalidAuth: '?????????????? ? PIN ????????????? ?????????????',
-        noShift: '??????????????????????????????????????',
+        checkingIdentity: 'កំពុងផ្ទៀងផ្ទាត់ព័ត៌មានបុគ្គលិក...',
+        back: 'ត្រឡប់',
+        next: 'បន្ទាប់',
+        selectShift: 'ជ្រើសវេនការងារ',
+        backToAuth: 'ត្រឡប់ក្រោយ',
+        goToSelfie: 'ទៅថតរូប',
+        goToScan: 'ទៅស្កេន QR',
+        scanHelp: 'ស្កេន QR ពីអេក្រង់ Kiosk ដើម្បីចុះវត្តមាន',
+        selfieHelp: 'ថតរូបខ្លួនឯងសិន ហើយបន្ទាប់មកស្កេន QR ដើម្បីបញ្ជាក់ការចុះវត្តមាន',
+        selfieRequired: 'សូមថតរូបខ្លួនឯងមុនពេលទៅស្កេន QR',
+        selfieCaptureError: 'មិនអាចថតរូបបាន សូមព្យាយាមម្ដងទៀត',
+        qrExpired: 'QR ផុតកំណត់ សូមស្កេនម្ដងទៀត',
+        backToShift: 'ត្រឡប់ក្រោយ',
+        backToSelfie: 'ត្រឡប់ទៅថតរូប',
+        takeSelfie: 'ថតរូប',
+        retakeSelfie: 'ថតសារឡើងវិញ',
+        scanToCheckIn: 'រង់ចាំស្កេន QR ដើម្បីចុះវត្តមាន',
+        confirming: 'កំពុងរក្សាទុក...',
+        success: 'បានរក្សាទុករួចរាល់',
+        checkInAt: 'ម៉ោងចូល',
+        estimatedOut: 'ពេលបញ្ចប់វេន (ប្រហែល)',
+        status: 'ស្ថានភាព',
+        shift: 'វេន',
+        home: 'ត្រឡប់មុខដើម',
+        nextPerson: 'បុគ្គលិកបន្ទាប់',
+        invalidAuth: 'លេខកូដបុគ្គលិក ឬ PIN មិនត្រឹមត្រូវ ឬគណនីមិនសកម្ម',
+        noShift: 'មិនមានវេនដែលអនុញ្ញាតសម្រាប់អ្នកប្រើនេះ',
         langBtn: 'TH',
     },
 } as const;
@@ -210,11 +212,11 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
 
         const verified = verifyQrToken(raw, config.qrSecret);
         if (!verified.valid || !verified.payload) {
-            throw new Error(verified.reason || 'QR ���١��ͧ');
+            throw new Error(verified.reason || 'QR ไม่ถูกต้อง');
         }
 
         if (hasNonceBeenUsed(verified.payload.nonce)) {
-            throw new Error('QR ���١��ҹ����');
+            throw new Error('QR นี้ถูกใช้งานแล้ว');
         }
 
         await finalizeCheckIn(
@@ -259,7 +261,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
             setScannerOpen(false);
             void handleQrPayload(code.data)
                 .catch((scanError) => {
-                    setError(scanError instanceof Error ? scanError.message : '�᡹��������');
+                    setError(scanError instanceof Error ? scanError.message : 'สแกนไม่สำเร็จ');
                     setScannerOpen(true);
                 })
                 .finally(() => {
@@ -361,7 +363,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                             <img src={employee.photoUrl} alt={employee.firstNameEN} />
                             <div>
                                 <strong>{employee.firstNameTH} {employee.lastNameTH}</strong>
-                                <p>{employee.id} ? {employee.role}</p>
+                                <p>{employee.id} | {employee.role}</p>
                             </div>
                         </div>
 
@@ -471,7 +473,7 @@ export const AppCheckIn: React.FC<AppCheckInProps> = ({ onBack }) => {
                             />
                         </div>
                         <details>
-                            <summary>QR ������ҧ����Ѻ���ͺ (dev)</summary>
+                            <summary>QR ตัวอย่างสำหรับทดสอบ (dev)</summary>
                             <code style={{ whiteSpace: 'break-spaces' }}>{qrPreview}</code>
                         </details>
                         <div className="inline-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>

@@ -1,95 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAppEmployees } from '../context/AppEmployeeContext';
 import { useAppSettings } from '../context/AppSettingsContext';
-import { appAttendanceService } from '../services/appAttendanceService';
-import type { AttendanceEmployeeReportRow, AttendanceSummaryRecord, LatePenaltyRule } from '../types/app';
-import { downloadCsv } from '../utils/csv';
-import { dayKey, formatThaiDateTime } from '../utils/shiftUtils';
 import { ImageLightbox } from '../components/ImageLightbox';
+import { appAttendanceService } from '../services/appAttendanceService';
+import type { AttendanceSummaryRecord } from '../types/app';
+import { downloadCsv } from '../utils/csv';
+import { formatThaiDateTime } from '../utils/shiftUtils';
 
-const buildDateRange = (from: string, to: string): string[] => {
-    if (!from || !to || from > to) {
-        return [];
-    }
-
-    const result: string[] = [];
-    const cursor = new Date(`${from}T00:00:00`);
-    const end = new Date(`${to}T00:00:00`);
-
-    while (cursor.getTime() <= end.getTime()) {
-        result.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`);
-        cursor.setDate(cursor.getDate() + 1);
-    }
-
-    return result;
-};
-
-const monthFromIso = (iso: string): string => {
-    const date = new Date(iso);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-};
-
-const sortRules = (rules: LatePenaltyRule[]): LatePenaltyRule[] => {
-    return [...rules].sort((a, b) => a.minMinutes - b.minMinutes);
-};
-
-const matchesRule = (minutes: number, rule: LatePenaltyRule): boolean => {
-    if (minutes < rule.minMinutes) {
-        return false;
-    }
-    if (rule.maxMinutes !== null && minutes > rule.maxMinutes) {
-        return false;
-    }
-    return true;
-};
-
-const calculateLatePenalty = (records: AttendanceSummaryRecord[], rules: LatePenaltyRule[]): number => {
-    if (!records.length || !rules.length) {
-        return 0;
-    }
-
-    const sortedRules = sortRules(rules);
-    let total = 0;
-    const monthlyMinutesByRule = new Map<string, number>();
-
-    records.forEach((record) => {
-        if (record.lateMinutes <= 0) {
-            return;
-        }
-
-        const matchedRule = sortedRules.find((rule) => matchesRule(record.lateMinutes, rule));
-        if (!matchedRule) {
-            return;
-        }
-
-        total += matchedRule.deductionAmount;
-
-        if (
-            matchedRule.monthlyAccumulatedMinutesThreshold !== null
-            && matchedRule.monthlyAccumulatedDeduction !== null
-        ) {
-            const key = `${matchedRule.id}:${monthFromIso(record.checkInAt)}`;
-            monthlyMinutesByRule.set(key, (monthlyMinutesByRule.get(key) || 0) + record.lateMinutes);
-        }
-    });
-
-    monthlyMinutesByRule.forEach((minutes, key) => {
-        const [ruleId] = key.split(':');
-        const rule = sortedRules.find((item) => item.id === ruleId);
-        if (!rule) {
-            return;
-        }
-
-        if (
-            rule.monthlyAccumulatedMinutesThreshold !== null
-            && rule.monthlyAccumulatedDeduction !== null
-            && minutes > rule.monthlyAccumulatedMinutesThreshold
-        ) {
-            total += rule.monthlyAccumulatedDeduction;
-        }
-    });
-
-    return total;
+const getEmployeeLabel = (record: AttendanceSummaryRecord): string => {
+    const normalized = record.employeeName.trim();
+    return normalized || record.employeeId;
 };
 
 export const AppAttendance: React.FC = () => {
@@ -109,23 +29,31 @@ export const AppAttendance: React.FC = () => {
     const load = async () => {
         setLoading(true);
         setError('');
-        const result = await appAttendanceService.listCheckIns(
-            config.shifts,
-            employees,
-            config.lateGraceMinutes,
-            {
-                from: fromDate,
-                to: toDate,
-                employeeId: employeeId === 'all' ? undefined : employeeId,
-            },
-        );
-        setRecords(result);
-        setLoading(false);
+        setNotice('');
+
+        try {
+            const result = await appAttendanceService.listCheckIns(
+                config.shifts,
+                employees,
+                config.lateGraceMinutes,
+                {
+                    from: fromDate,
+                    to: toDate,
+                    employeeId: employeeId === 'all' ? undefined : employeeId,
+                },
+            );
+            setRecords(result);
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : 'Unable to load attendance log');
+            setRecords([]);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const deleteCheckIn = async (record: AttendanceSummaryRecord) => {
         const shouldDelete = window.confirm(
-            `ลบรายการเช็คอิน ${record.employeeId} เวลา ${formatThaiDateTime(record.checkInAt)} ใช่หรือไม่`,
+            `Delete check-in for ${record.employeeId} at ${formatThaiDateTime(record.checkInAt)}?`,
         );
         if (!shouldDelete) {
             return;
@@ -137,10 +65,10 @@ export const AppAttendance: React.FC = () => {
 
         try {
             await appAttendanceService.deleteCheckIn(record.id);
-            setNotice('ลบรายการเช็คอินเรียบร้อยแล้ว');
+            setNotice('Check-in deleted successfully.');
             await load();
         } catch (deleteError) {
-            setError(deleteError instanceof Error ? deleteError.message : 'ลบรายการไม่สำเร็จ');
+            setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete check-in');
         } finally {
             setDeletingId('');
         }
@@ -161,94 +89,6 @@ export const AppAttendance: React.FC = () => {
         };
     }, [records]);
 
-    const recordSummaryByEmployee = useMemo(() => {
-        const map = new Map<string, {
-            records: AttendanceSummaryRecord[];
-            lateRecords: AttendanceSummaryRecord[];
-            checkInDaySet: Set<string>;
-            totalLateMinutes: number;
-        }>();
-
-        records.forEach((record) => {
-            const current = map.get(record.employeeId) || {
-                records: [],
-                lateRecords: [],
-                checkInDaySet: new Set<string>(),
-                totalLateMinutes: 0,
-            };
-
-            current.records.push(record);
-            current.checkInDaySet.add(dayKey(record.checkInAt));
-            if (record.lateMinutes > 0) {
-                current.lateRecords.push(record);
-                current.totalLateMinutes += record.lateMinutes;
-            }
-
-            map.set(record.employeeId, current);
-        });
-
-        return map;
-    }, [records]);
-
-    const detailRows = useMemo<AttendanceEmployeeReportRow[]>(() => {
-        const daysInRange = buildDateRange(fromDate, toDate);
-        const totalDays = daysInRange.length;
-        const targetEmployees = employeeId === 'all'
-            ? employees
-            : employees.filter((employee) => employee.id === employeeId);
-
-        return targetEmployees
-            .map((employee) => {
-                const summary = recordSummaryByEmployee.get(employee.id);
-                const employeeRecords = summary?.records || [];
-                const lateRecords = summary?.lateRecords || [];
-                const totalLateMinutes = summary?.totalLateMinutes || 0;
-                const onTimeCount = employeeRecords.length - lateRecords.length;
-                const missingDays = Math.max(0, totalDays - (summary?.checkInDaySet.size || 0));
-                const leaveDays = employee.status === 'OnLeave' ? missingDays : 0;
-                const absentDays = employee.status === 'Active' ? missingDays : 0;
-
-                return {
-                    employeeId: employee.id,
-                    employeeName: `${employee.firstNameTH} ${employee.lastNameTH}`.trim(),
-                    department: employee.department || '-',
-                    role: employee.role,
-                    employmentStatus: employee.status,
-                    checkInCount: employeeRecords.length,
-                    onTimeCount,
-                    lateCount: lateRecords.length,
-                    totalLateMinutes,
-                    averageLateMinutes: lateRecords.length > 0 ? Math.round(totalLateMinutes / lateRecords.length) : 0,
-                    absentDays,
-                    leaveDays,
-                    latePenaltyAmount: calculateLatePenalty(lateRecords, config.lateRules),
-                };
-            })
-            .filter((row) => row.employmentStatus !== 'Resigned')
-            .sort((a, b) => a.employeeId.localeCompare(b.employeeId));
-    }, [config.lateRules, employeeId, employees, fromDate, recordSummaryByEmployee, toDate]);
-
-    const detailStats = useMemo(() => {
-        return detailRows.reduce(
-            (summary, row) => {
-                return {
-                    employees: summary.employees + 1,
-                    absentDays: summary.absentDays + row.absentDays,
-                    leaveDays: summary.leaveDays + row.leaveDays,
-                    totalLateMinutes: summary.totalLateMinutes + row.totalLateMinutes,
-                    totalPenalty: summary.totalPenalty + row.latePenaltyAmount,
-                };
-            },
-            {
-                employees: 0,
-                absentDays: 0,
-                leaveDays: 0,
-                totalLateMinutes: 0,
-                totalPenalty: 0,
-            },
-        );
-    }, [detailRows]);
-
     const exportCheckInCsv = () => {
         const rows = records.map((record) => ({
             employee_id: record.employeeId,
@@ -264,53 +104,33 @@ export const AppAttendance: React.FC = () => {
             photo_url: record.photoUrl,
         }));
 
-        downloadCsv(`attendance_checkins_${fromDate}_${toDate}.csv`, rows);
-    };
-
-    const exportDetailCsv = () => {
-        const rows = detailRows.map((row) => ({
-            employee_id: row.employeeId,
-            employee_name: row.employeeName,
-            role: row.role,
-            department: row.department,
-            employment_status: row.employmentStatus,
-            checkin_count: row.checkInCount,
-            ontime_count: row.onTimeCount,
-            late_count: row.lateCount,
-            total_late_minutes: row.totalLateMinutes,
-            average_late_minutes: row.averageLateMinutes,
-            absent_days: row.absentDays,
-            leave_days: row.leaveDays,
-            late_penalty_amount: row.latePenaltyAmount,
-        }));
-
-        downloadCsv(`attendance_detail_${fromDate}_${toDate}.csv`, rows);
+        downloadCsv(`attendance_log_${fromDate}_${toDate}.csv`, rows);
     };
 
     return (
         <div className="portal-grid reveal-up">
             <section className="panel">
                 <div className="panel-head">
-                    <h3>ตัวกรองรายการเช็คอิน</h3>
-                    <button type="button" className="btn-primary" onClick={load}>รีเฟรช</button>
+                    <h3>Attendance Log Filters</h3>
+                    <button type="button" className="btn-primary" onClick={load}>Refresh</button>
                 </div>
 
                 <div className="filter-grid">
                     <div>
-                        <label>จากวันที่</label>
+                        <label>From</label>
                         <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
                     </div>
                     <div>
-                        <label>ถึงวันที่</label>
+                        <label>To</label>
                         <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
                     </div>
                     <div>
-                        <label>พนักงาน</label>
+                        <label>Employee</label>
                         <select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
-                            <option value="all">ทั้งหมด</option>
+                            <option value="all">All</option>
                             {employees.map((employee) => (
                                 <option key={employee.id} value={employee.id}>
-                                    {employee.id} - {employee.firstNameTH} {employee.lastNameTH}
+                                    {employee.id} - {(employee.nickname || `${employee.firstNameTH} ${employee.lastNameTH}`).trim()}
                                 </option>
                             ))}
                         </select>
@@ -319,75 +139,25 @@ export const AppAttendance: React.FC = () => {
 
                 <div className="inline-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
                     <div className="panel-muted">
-                        Log ทั้งหมด {stats.rows} รายการ · กะที่ไม่ซ้ำ {stats.uniqueShifts} · สาย {stats.lateRows}
+                        Log rows {stats.rows} | unique day-shifts {stats.uniqueShifts} | late {stats.lateRows}
                     </div>
-                    <div className="inline-actions" style={{ flexWrap: 'wrap' }}>
-                        <button type="button" className="btn-muted" onClick={exportDetailCsv}>Export รายงานรายชื่อ</button>
-                        <button type="button" className="btn-muted" onClick={exportCheckInCsv}>Export Log เช็คอิน</button>
-                    </div>
+                    <button type="button" className="btn-muted" onClick={exportCheckInCsv}>Export Log CSV</button>
                 </div>
+
                 {error ? <div className="form-error">{error}</div> : null}
                 {notice ? <p className="panel-muted">{notice}</p> : null}
             </section>
 
             <section className="panel table-panel">
                 <div className="panel-head">
-                    <h3>รายงานสรุปรายชื่อ</h3>
-                    <span>พนักงาน {detailStats.employees} คน</span>
+                    <h3>Check-in Log</h3>
+                    <span>{records.length} rows</span>
                 </div>
 
-                <p className="panel-muted">
-                    ขาดรวม {detailStats.absentDays} วัน · ลารวม {detailStats.leaveDays} วัน · สายรวม {detailStats.totalLateMinutes} นาที · ยอดหักรวม {detailStats.totalPenalty} บาท
-                </p>
-
-                {!loading && detailRows.length === 0 ? <p className="panel-muted">ไม่พบข้อมูลพนักงานในช่วงวันที่ที่เลือก</p> : null}
-
-                {!loading && detailRows.length > 0 ? (
-                    <div className="table-wrap">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>พนักงาน</th>
-                                    <th>บทบาท</th>
-                                    <th>เช็คอิน</th>
-                                    <th>มาสาย</th>
-                                    <th>สายรวม (นาที)</th>
-                                    <th>ขาด (วัน)</th>
-                                    <th>ลา (วัน)</th>
-                                    <th>ยอดหักสาย (บาท)</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {detailRows.map((row) => (
-                                    <tr key={row.employeeId}>
-                                        <td>
-                                            <strong>{row.employeeName}</strong>
-                                            <div className="panel-muted">{row.employeeId} · {row.department}</div>
-                                        </td>
-                                        <td>{row.role}</td>
-                                        <td>{row.checkInCount} ครั้ง (ตรงเวลา {row.onTimeCount})</td>
-                                        <td>{row.lateCount} ครั้ง</td>
-                                        <td>{row.totalLateMinutes} (เฉลี่ย {row.averageLateMinutes})</td>
-                                        <td>{row.absentDays}</td>
-                                        <td>{row.leaveDays}</td>
-                                        <td>{row.latePenaltyAmount}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                ) : null}
-            </section>
-
-            <section className="panel table-panel">
-                <div className="panel-head">
-                    <h3>Log การเช็คอิน</h3>
-                </div>
-
-                {loading ? <p className="panel-muted">กำลังโหลดข้อมูล...</p> : null}
+                {loading ? <p className="panel-muted">Loading attendance log...</p> : null}
 
                 {!loading && records.length === 0 ? (
-                    <p className="panel-muted">ไม่พบข้อมูลในช่วงวันที่ที่เลือก</p>
+                    <p className="panel-muted">No check-in records found for the selected range.</p>
                 ) : null}
 
                 {!loading && records.length > 0 ? (
@@ -395,13 +165,13 @@ export const AppAttendance: React.FC = () => {
                         <table>
                             <thead>
                                 <tr>
-                                    <th>พนักงาน</th>
-                                    <th>กะ</th>
-                                    <th>เวลาเข้า</th>
-                                    <th>เวลาสิ้นสุดกะ (ประมาณ)</th>
-                                    <th>สถานะ</th>
-                                    <th>สาย (นาที)</th>
-                                    <th>รูปยืนยัน</th>
+                                    <th>Employee</th>
+                                    <th>Shift</th>
+                                    <th>Check-in</th>
+                                    <th>Shift End</th>
+                                    <th>Status</th>
+                                    <th>Late (min)</th>
+                                    <th>Photo</th>
                                     <th />
                                 </tr>
                             </thead>
@@ -409,7 +179,7 @@ export const AppAttendance: React.FC = () => {
                                 {records.map((record) => (
                                     <tr key={record.id}>
                                         <td>
-                                            <strong>{record.employeeName}</strong>
+                                            <strong>{getEmployeeLabel(record)}</strong>
                                             <div className="panel-muted">{record.employeeId}</div>
                                         </td>
                                         <td>{record.shiftLabel}</td>
@@ -428,12 +198,12 @@ export const AppAttendance: React.FC = () => {
                                                     className="image-preview-trigger attendance-selfie-trigger"
                                                     onClick={() => setPreviewPhoto({
                                                         src: record.photoUrl,
-                                                        alt: `${record.employeeId} check-in selfie`,
+                                                        alt: `${record.employeeId} check-in photo`,
                                                     })}
                                                 >
                                                     <img
                                                         src={record.photoUrl}
-                                                        alt={`${record.employeeId} check-in selfie`}
+                                                        alt={`${record.employeeId} check-in photo`}
                                                         className="attendance-selfie-thumb"
                                                     />
                                                 </button>
@@ -448,7 +218,7 @@ export const AppAttendance: React.FC = () => {
                                                 onClick={() => void deleteCheckIn(record)}
                                                 disabled={deletingId === record.id}
                                             >
-                                                {deletingId === record.id ? 'กำลังลบ...' : 'ลบ'}
+                                                {deletingId === record.id ? 'Deleting...' : 'Delete'}
                                             </button>
                                         </td>
                                     </tr>

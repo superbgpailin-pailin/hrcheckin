@@ -23,6 +23,7 @@ const AppSelfProfile = React.lazy(() => import('./pages/AppSelfProfile').then((m
 const AdminLoginPage = React.lazy(() => import('./pages/AdminLoginPage').then((module) => ({ default: module.AdminLoginPage })));
 const AppDashboard = React.lazy(() => import('./pages/AppDashboard').then((module) => ({ default: module.AppDashboard })));
 const AppAttendance = React.lazy(() => import('./pages/AppAttendance').then((module) => ({ default: module.AppAttendance })));
+const AppReports = React.lazy(() => import('./pages/AppReports').then((module) => ({ default: module.AppReports })));
 const AppEmployees = React.lazy(() => import('./pages/AppEmployees').then((module) => ({ default: module.AppEmployees })));
 const AppProfileRequests = React.lazy(() => import('./pages/AppProfileRequests').then((module) => ({ default: module.AppProfileRequests })));
 const AppSettings = React.lazy(() => import('./pages/AppSettings').then((module) => ({ default: module.AppSettings })));
@@ -189,6 +190,7 @@ const AppContent: React.FC<AppContentProps> = ({ route, navigate }) => {
         >
             {portalPage === 'dashboard' ? <AppDashboard /> : null}
             {portalPage === 'attendance' ? <AppAttendance /> : null}
+            {portalPage === 'reports' ? <AppReports /> : null}
             {portalPage === 'employees' ? <AppEmployees /> : null}
             {portalPage === 'requests' ? <AppProfileRequests /> : null}
             {portalPage === 'settings' ? <AppSettings /> : null}

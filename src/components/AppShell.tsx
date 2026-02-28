@@ -13,6 +13,7 @@ interface AppShellProps {
 const pageTitle: Record<PortalPage, string> = {
     dashboard: 'Dashboard',
     attendance: 'Attendance',
+    reports: 'Reports',
     employees: 'Employees',
     requests: 'Profile Requests',
     settings: 'Settings',
