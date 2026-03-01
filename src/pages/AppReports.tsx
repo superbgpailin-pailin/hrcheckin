@@ -4,7 +4,28 @@ import { useAppSettings } from '../context/AppSettingsContext';
 import { appAttendanceService } from '../services/appAttendanceService';
 import type { AttendanceEmployeeReportRow, AttendanceSummaryRecord, LatePenaltyRule } from '../types/app';
 import { downloadCsv } from '../utils/csv';
-import { dayKey } from '../utils/shiftUtils';
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const todayBangkokDateInput = (): string => {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+};
+
+const dayKeyBangkok = (iso: string): string => {
+    return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+};
+
+const timeLabelBangkok = (iso: string): string => {
+    return new Date(iso).toLocaleTimeString('th-TH', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Asia/Bangkok',
+    });
+};
+
+const dateInputToUtcDate = (dateInput: string): Date => {
+    return new Date(`${dateInput}T00:00:00Z`);
+};
 
 const buildDateRange = (from: string, to: string): string[] => {
     if (!from || !to || from > to) {
@@ -12,20 +33,51 @@ const buildDateRange = (from: string, to: string): string[] => {
     }
 
     const result: string[] = [];
-    const cursor = new Date(`${from}T00:00:00`);
-    const end = new Date(`${to}T00:00:00`);
+    const cursor = dateInputToUtcDate(from);
+    const end = dateInputToUtcDate(to);
 
     while (cursor.getTime() <= end.getTime()) {
-        result.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`);
-        cursor.setDate(cursor.getDate() + 1);
+        result.push(cursor.toISOString().slice(0, 10));
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
 
     return result;
 };
 
 const monthFromIso = (iso: string): string => {
-    const date = new Date(iso);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return dayKeyBangkok(iso).slice(0, 7);
+};
+
+const monthLabel = (monthKey: string): string => {
+    const [yearRaw, monthRaw] = monthKey.split('-');
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+        return monthKey;
+    }
+
+    return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString('th-TH', {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+    });
+};
+
+const endOfMonthInput = (monthKey: string): string => {
+    const [yearRaw, monthRaw] = monthKey.split('-');
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+        return monthKey;
+    }
+
+    return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+};
+
+const weekdayIndex = (dateInput: string): number => {
+    return dateInputToUtcDate(dateInput).getUTCDay();
 };
 
 const sortRules = (rules: LatePenaltyRule[]): LatePenaltyRule[] => {
@@ -96,18 +148,72 @@ const getEmployeeLabel = (employeeName: string, employeeId: string): string => {
     return normalized || employeeId;
 };
 
+const buildCalendarMonths = (
+    fromDate: string,
+    toDate: string,
+    recordsByDay: Map<string, AttendanceSummaryRecord>,
+): Array<{
+    key: string;
+    label: string;
+    cells: Array<{ dateInput: string; inRange: boolean; record: AttendanceSummaryRecord | null } | null>;
+}> => {
+    if (!fromDate || !toDate || fromDate > toDate) {
+        return [];
+    }
+
+    const allDates = buildDateRange(fromDate, toDate);
+    const monthKeys = Array.from(new Set(allDates.map((dateInput) => dateInput.slice(0, 7))));
+
+    return monthKeys.map((monthKey) => {
+        const monthStart = `${monthKey}-01`;
+        const monthEnd = endOfMonthInput(monthKey);
+        const monthDates = buildDateRange(monthStart, monthEnd);
+        const cells: Array<{ dateInput: string; inRange: boolean; record: AttendanceSummaryRecord | null } | null> = [];
+
+        for (let index = 0; index < weekdayIndex(monthStart); index += 1) {
+            cells.push(null);
+        }
+
+        monthDates.forEach((dateInput) => {
+            const inRange = dateInput >= fromDate && dateInput <= toDate;
+            cells.push({
+                dateInput,
+                inRange,
+                record: inRange ? recordsByDay.get(dateInput) || null : null,
+            });
+        });
+
+        while (cells.length % 7 !== 0) {
+            cells.push(null);
+        }
+
+        return {
+            key: monthKey,
+            label: monthLabel(monthKey),
+            cells,
+        };
+    });
+};
+
 export const AppReports: React.FC = () => {
     const { employees } = useAppEmployees();
     const { config } = useAppSettings();
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayBangkokDateInput();
+    const currentMonth = today.slice(0, 7);
+    const calendarFromDate = `${currentMonth}-01`;
+    const calendarToDate = endOfMonthInput(currentMonth);
 
     const [records, setRecords] = useState<AttendanceSummaryRecord[]>([]);
+    const [calendarRecords, setCalendarRecords] = useState<AttendanceSummaryRecord[]>([]);
     const [loading, setLoading] = useState(true);
+    const [calendarLoading, setCalendarLoading] = useState(false);
     const [error, setError] = useState('');
+    const [calendarError, setCalendarError] = useState('');
     const [fromDate, setFromDate] = useState(today);
     const [toDate, setToDate] = useState(today);
     const [employeeId, setEmployeeId] = useState('all');
+    const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
 
     const load = async () => {
         setLoading(true);
@@ -136,7 +242,55 @@ export const AppReports: React.FC = () => {
     useEffect(() => {
         void load();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [config.lateGraceMinutes, config.shifts, employees]);
+    }, [config.lateGraceMinutes, config.shifts, employees, fromDate, toDate, employeeId]);
+
+    useEffect(() => {
+        if (!selectedEmployeeId) {
+            setCalendarRecords([]);
+            setCalendarError('');
+            setCalendarLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+
+        const loadCalendar = async () => {
+            setCalendarLoading(true);
+            setCalendarError('');
+
+            try {
+                const result = await appAttendanceService.listCheckIns(
+                    config.shifts,
+                    employees,
+                    config.lateGraceMinutes,
+                    {
+                        from: calendarFromDate,
+                        to: calendarToDate,
+                        employeeId: selectedEmployeeId,
+                    },
+                );
+
+                if (!cancelled) {
+                    setCalendarRecords(result);
+                }
+            } catch (loadError) {
+                if (!cancelled) {
+                    setCalendarError(loadError instanceof Error ? loadError.message : 'Unable to load attendance calendar');
+                    setCalendarRecords([]);
+                }
+            } finally {
+                if (!cancelled) {
+                    setCalendarLoading(false);
+                }
+            }
+        };
+
+        void loadCalendar();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [calendarFromDate, calendarToDate, config.lateGraceMinutes, config.shifts, employees, selectedEmployeeId]);
 
     const recordSummaryByEmployee = useMemo(() => {
         const map = new Map<string, {
@@ -155,7 +309,7 @@ export const AppReports: React.FC = () => {
             };
 
             current.records.push(record);
-            current.checkInDaySet.add(dayKey(record.checkInAt));
+            current.checkInDaySet.add(dayKeyBangkok(record.checkInAt));
             if (record.lateMinutes > 0) {
                 current.lateRecords.push(record);
                 current.totalLateMinutes += record.lateMinutes;
@@ -211,6 +365,18 @@ export const AppReports: React.FC = () => {
             .sort((a, b) => a.employeeId.localeCompare(b.employeeId));
     }, [config.lateRules, employeeId, employees, fromDate, recordSummaryByEmployee, toDate]);
 
+    useEffect(() => {
+        if (detailRows.length === 0) {
+            setSelectedEmployeeId('');
+            return;
+        }
+
+        const selectedStillExists = detailRows.some((row) => row.employeeId === selectedEmployeeId);
+        if (!selectedStillExists) {
+            setSelectedEmployeeId('');
+        }
+    }, [detailRows, selectedEmployeeId]);
+
     const detailStats = useMemo(() => {
         return detailRows.reduce(
             (summary, row) => ({
@@ -229,6 +395,28 @@ export const AppReports: React.FC = () => {
             },
         );
     }, [detailRows]);
+
+    const selectedEmployeeRecordsByDay = useMemo(() => {
+        const map = new Map<string, AttendanceSummaryRecord>();
+        const items = [...calendarRecords].sort((a, b) => new Date(a.checkInAt).getTime() - new Date(b.checkInAt).getTime());
+
+        items.forEach((record) => {
+            const key = dayKeyBangkok(record.checkInAt);
+            if (!map.has(key)) {
+                map.set(key, record);
+            }
+        });
+
+        return map;
+    }, [calendarRecords]);
+
+    const calendarMonths = useMemo(() => {
+        if (!selectedEmployeeId) {
+            return [];
+        }
+
+        return buildCalendarMonths(calendarFromDate, calendarToDate, selectedEmployeeRecordsByDay);
+    }, [calendarFromDate, calendarToDate, selectedEmployeeId, selectedEmployeeRecordsByDay]);
 
     const exportSummaryCsv = () => {
         const rows = detailRows.map((row) => ({
@@ -322,21 +510,110 @@ export const AppReports: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {detailRows.map((row) => (
-                                    <tr key={row.employeeId}>
-                                        <td>
-                                            <strong>{getEmployeeLabel(row.employeeName, row.employeeId)}</strong>
-                                            <div className="panel-muted">{row.employeeId} | {row.department}</div>
-                                        </td>
-                                        <td>{row.role}</td>
-                                        <td>{row.checkInCount} (On time {row.onTimeCount})</td>
-                                        <td>{row.lateCount}</td>
-                                        <td>{row.totalLateMinutes} (avg {row.averageLateMinutes})</td>
-                                        <td>{row.absentDays}</td>
-                                        <td>{row.leaveDays}</td>
-                                        <td>{row.latePenaltyAmount}</td>
-                                    </tr>
-                                ))}
+                                {detailRows.map((row) => {
+                                    const isExpanded = selectedEmployeeId === row.employeeId;
+
+                                    return (
+                                        <React.Fragment key={row.employeeId}>
+                                            <tr
+                                                className={`report-select-row ${isExpanded ? 'active' : ''}`}
+                                                onClick={() => setSelectedEmployeeId((current) => current === row.employeeId ? '' : row.employeeId)}
+                                            >
+                                                <td>
+                                                    <strong>{getEmployeeLabel(row.employeeName, row.employeeId)}</strong>
+                                                    <div className="panel-muted">{row.employeeId} | {row.department}</div>
+                                                </td>
+                                                <td>{row.role}</td>
+                                                <td>{row.checkInCount} (On time {row.onTimeCount})</td>
+                                                <td>{row.lateCount}</td>
+                                                <td>{row.totalLateMinutes} (avg {row.averageLateMinutes})</td>
+                                                <td>{row.absentDays}</td>
+                                                <td>{row.leaveDays}</td>
+                                                <td>{row.latePenaltyAmount}</td>
+                                            </tr>
+
+                                            {isExpanded ? (
+                                                <tr className="report-detail-row">
+                                                    <td colSpan={8}>
+                                                        <div className="report-detail-card">
+                                                            <div className="calendar-month-head">
+                                                                <h4>
+                                                                    {`${row.employeeId} | ${getEmployeeLabel(row.employeeName, row.employeeId)} | ${monthLabel(currentMonth)}`}
+                                                                </h4>
+                                                                <span>Attendance Calendar</span>
+                                                            </div>
+
+                                                            {calendarLoading ? (
+                                                                <p className="panel-muted">Loading attendance calendar...</p>
+                                                            ) : null}
+
+                                                            {calendarError ? (
+                                                                <div className="form-error">{calendarError}</div>
+                                                            ) : null}
+
+                                                            {!calendarLoading && !calendarError ? (
+                                                                <div className="calendar-months">
+                                                                    {calendarMonths.map((month) => (
+                                                                        <article key={month.key} className="calendar-month-card">
+                                                                            <div className="calendar-month-head">
+                                                                                <h4>{month.label}</h4>
+                                                                                <span>{row.employeeId}</span>
+                                                                            </div>
+
+                                                                            <div className="calendar-grid calendar-weekdays">
+                                                                                {WEEKDAY_LABELS.map((label) => (
+                                                                                    <div key={label} className="calendar-weekday">{label}</div>
+                                                                                ))}
+                                                                            </div>
+
+                                                                            <div className="calendar-grid">
+                                                                                {month.cells.map((cell, index) => {
+                                                                                    if (!cell) {
+                                                                                        return <div key={`${month.key}-empty-${index}`} className="calendar-day calendar-day-empty-slot" />;
+                                                                                    }
+
+                                                                                    const dayNumber = Number(cell.dateInput.slice(-2));
+                                                                                    const toneClass = !cell.inRange
+                                                                                        ? 'out-range'
+                                                                                        : cell.record
+                                                                                            ? (cell.record.status === 'Late' ? 'late' : 'on-time')
+                                                                                            : 'missing';
+
+                                                                                    return (
+                                                                                        <div key={cell.dateInput} className={`calendar-day ${toneClass}`}>
+                                                                                            <div className="calendar-day-label">{dayNumber}</div>
+
+                                                                                            {cell.inRange ? (
+                                                                                                cell.record ? (
+                                                                                                    <>
+                                                                                                        <strong className="calendar-day-time">{timeLabelBangkok(cell.record.checkInAt)}</strong>
+                                                                                                        <span className="calendar-day-shift">{cell.record.shiftLabel}</span>
+                                                                                                        {cell.record.lateMinutes > 0 ? (
+                                                                                                            <span className="panel-muted">Late {cell.record.lateMinutes} min</span>
+                                                                                                        ) : null}
+                                                                                                        <span className={`status-pill ${cell.record.status === 'Late' ? 'late' : 'on-time'}`}>
+                                                                                                            {cell.record.status}
+                                                                                                        </span>
+                                                                                                    </>
+                                                                                                ) : (
+                                                                                                    <span className="calendar-day-empty">No check-in</span>
+                                                                                                )
+                                                                                            ) : null}
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+                                                                        </article>
+                                                                    ))}
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ) : null}
+                                        </React.Fragment>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
