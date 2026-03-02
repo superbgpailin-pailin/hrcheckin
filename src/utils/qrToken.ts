@@ -2,6 +2,7 @@
 import type { QrTokenPayload } from '../types/app';
 
 const USED_NONCE_KEY = 'hrcheckin_used_qr_nonces';
+const QR_CLOCK_SKEW_TOLERANCE_MS = 30 * 1000;
 
 const signatureBase = (payload: Omit<QrTokenPayload, 'signature'>): string => {
     return `${payload.kioskId}|${payload.nonce}|${payload.issuedAt}|${payload.expiresAt}`;
@@ -9,7 +10,31 @@ const signatureBase = (payload: Omit<QrTokenPayload, 'signature'>): string => {
 
 const safeParse = (raw: string): QrTokenPayload | null => {
     try {
-        return JSON.parse(raw) as QrTokenPayload;
+        const parsed = JSON.parse(raw) as Partial<QrTokenPayload> | null;
+        if (!parsed) {
+            return null;
+        }
+
+        const issuedAt = Number(parsed.issuedAt);
+        const expiresAt = Number(parsed.expiresAt);
+        if (
+            !parsed.kioskId
+            || !parsed.nonce
+            || !parsed.signature
+            || !Number.isFinite(issuedAt)
+            || !Number.isFinite(expiresAt)
+            || expiresAt <= issuedAt
+        ) {
+            return null;
+        }
+
+        return {
+            kioskId: parsed.kioskId,
+            nonce: parsed.nonce,
+            issuedAt,
+            expiresAt,
+            signature: parsed.signature,
+        };
     } catch {
         return null;
     }
@@ -69,7 +94,7 @@ export const verifyQrToken = (
         return { valid: false, reason: 'ลายเซ็น QR ไม่ถูกต้อง' };
     }
 
-    if (payload.expiresAt < nowMillis) {
+    if (payload.expiresAt + QR_CLOCK_SKEW_TOLERANCE_MS < nowMillis) {
         return { valid: false, reason: 'QR หมดอายุแล้ว' };
     }
 

@@ -6,6 +6,8 @@ import { getErrorMessage, isSchemaMissingError, withReadRetry } from '../utils/s
 const tableName = 'settings';
 const settingsId = 'checkin_v2';
 let settingsTableUnavailable = false;
+export const MIN_QR_REFRESH_LEAD_SECONDS = 2;
+export const MIN_QR_TOKEN_VALIDITY_BUFFER_SECONDS = 10;
 
 interface SettingsRow {
     config: AppSystemConfig;
@@ -22,6 +24,28 @@ const normalizeNullableNumber = (value: unknown): number | null => {
     }
 
     return Math.max(0, Math.floor(parsed));
+};
+
+const normalizePositiveWholeNumber = (value: unknown, fallback: number): number => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.max(1, Math.floor(parsed));
+};
+
+export const clampQrRefreshSeconds = (refreshSeconds: number, lifetimeSeconds: number): number => {
+    const safeLifetime = Math.max(1, Math.floor(lifetimeSeconds));
+    const maxRefresh = safeLifetime > MIN_QR_REFRESH_LEAD_SECONDS
+        ? safeLifetime - MIN_QR_REFRESH_LEAD_SECONDS
+        : safeLifetime;
+
+    return Math.min(Math.max(1, Math.floor(refreshSeconds)), maxRefresh);
+};
+
+export const minimumQrTokenLifetimeSeconds = (refreshSeconds: number): number => {
+    return Math.max(1, Math.floor(refreshSeconds)) + MIN_QR_TOKEN_VALIDITY_BUFFER_SECONDS;
 };
 
 const cloneDefaultShifts = (): AppSystemConfig['shifts'] => {
@@ -104,10 +128,22 @@ const normalizeLateRules = (rules?: AppSystemConfig['lateRules']): AppSystemConf
         .sort((a, b) => a.minMinutes - b.minMinutes);
 };
 
-const mergeConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
+export const normalizeAppSystemConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
+    const requestedRefreshSeconds = normalizePositiveWholeNumber(
+        input?.qrRefreshSeconds,
+        DEFAULT_CONFIG.qrRefreshSeconds,
+    );
+    const qrTokenLifetimeSeconds = Math.max(
+        normalizePositiveWholeNumber(input?.qrTokenLifetimeSeconds, DEFAULT_CONFIG.qrTokenLifetimeSeconds),
+        minimumQrTokenLifetimeSeconds(requestedRefreshSeconds),
+    );
+    const qrRefreshSeconds = clampQrRefreshSeconds(requestedRefreshSeconds, qrTokenLifetimeSeconds);
+
     if (!input) {
         return {
             ...DEFAULT_CONFIG,
+            qrTokenLifetimeSeconds,
+            qrRefreshSeconds,
             shifts: cloneDefaultShifts(),
             lateRules: cloneDefaultLateRules(),
             controlShiftPolicy: {
@@ -121,6 +157,8 @@ const mergeConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
     return {
         ...DEFAULT_CONFIG,
         ...input,
+        qrTokenLifetimeSeconds,
+        qrRefreshSeconds,
         lateRules: normalizeLateRules(input.lateRules),
         controlShiftPolicy: {
             ...DEFAULT_CONFIG.controlShiftPolicy,
@@ -140,7 +178,7 @@ const mergeConfig = (input?: Partial<AppSystemConfig>): AppSystemConfig => {
 export const appSettingsService = {
     async getSettings(): Promise<AppSystemConfig> {
         if (settingsTableUnavailable) {
-            return mergeConfig();
+            return normalizeAppSystemConfig();
         }
 
         try {
@@ -158,16 +196,16 @@ export const appSettingsService = {
 
             const rows = (data as SettingsRow[] | null) || [];
             if (!rows.length) {
-                return mergeConfig();
+                return normalizeAppSystemConfig();
             }
 
-            return mergeConfig(rows[0].config);
+            return normalizeAppSystemConfig(rows[0].config);
         } catch (fetchError) {
             const message = getErrorMessage(fetchError);
             if (isSchemaMissingError(message)) {
                 settingsTableUnavailable = true;
             }
-            return mergeConfig();
+            return normalizeAppSystemConfig();
         }
     },
 
@@ -176,7 +214,7 @@ export const appSettingsService = {
             return;
         }
 
-        const merged = mergeConfig(config);
+        const merged = normalizeAppSystemConfig(config);
         const { error } = await supabase
             .from(tableName)
             .upsert({ id: settingsId, config: merged });

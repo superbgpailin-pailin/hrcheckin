@@ -2,7 +2,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { AppSystemConfig } from '../types/app';
 import { DEFAULT_CONFIG } from '../data/appDefaults';
-import { appSettingsService } from '../services/appSettingsService';
+import { appSettingsService, normalizeAppSystemConfig } from '../services/appSettingsService';
 
 interface AppSettingsContextValue {
     config: AppSystemConfig;
@@ -24,14 +24,14 @@ const readStoredConfig = (): AppSystemConfig => {
         }
 
         const parsed = JSON.parse(raw) as AppSystemConfig;
-        return parsed || DEFAULT_CONFIG;
+        return normalizeAppSystemConfig(parsed || DEFAULT_CONFIG);
     } catch {
         return DEFAULT_CONFIG;
     }
 };
 
 const persistConfig = (config: AppSystemConfig): void => {
-    localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(config));
+    localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(normalizeAppSystemConfig(config)));
 };
 
 interface AppSettingsProviderProps {
@@ -83,8 +83,10 @@ export const AppSettingsProvider: React.FC<AppSettingsProviderProps> = ({ childr
     }, [enabled]);
 
     const saveConfig = useCallback(async () => {
-        await appSettingsService.saveSettings(config);
-        persistConfig(config);
+        const normalized = normalizeAppSystemConfig(config);
+        setConfig(normalized);
+        await appSettingsService.saveSettings(normalized);
+        persistConfig(normalized);
     }, [config]);
 
     const value = useMemo<AppSettingsContextValue>(() => {

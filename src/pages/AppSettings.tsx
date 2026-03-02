@@ -1,6 +1,12 @@
 ﻿import React, { useMemo, useState } from 'react';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { usePortalAuth } from '../context/PortalAuthContext';
+import {
+    clampQrRefreshSeconds,
+    MIN_QR_REFRESH_LEAD_SECONDS,
+    MIN_QR_TOKEN_VALIDITY_BUFFER_SECONDS,
+    minimumQrTokenLifetimeSeconds,
+} from '../services/appSettingsService';
 import type { LatePenaltyRule } from '../types/app';
 import { controlDayForMonth, monthKey } from '../utils/shiftUtils';
 
@@ -20,6 +26,10 @@ const parseNumberOr = (value: string, fallback: number): number => {
         return fallback;
     }
     return Math.max(0, Math.floor(parsed));
+};
+
+const parsePositiveNumberOr = (value: string, fallback: number): number => {
+    return Math.max(1, parseNumberOr(value, fallback));
 };
 
 const parseNullableNumber = (value: string): number | null => {
@@ -55,6 +65,9 @@ export const AppSettings: React.FC = () => {
         const date = new Date(year, (month || 1) - 1, 1);
         return controlDayForMonth(date, config);
     }, [config, selectedMonth]);
+    const minimumQrLifetime = useMemo(() => {
+        return minimumQrTokenLifetimeSeconds(config.qrRefreshSeconds);
+    }, [config.qrRefreshSeconds]);
 
     const manualDate = config.controlShiftPolicy.overrides[selectedMonth] || computedDefaultDate;
 
@@ -81,6 +94,30 @@ export const AppSettings: React.FC = () => {
                     ...prev.controlShiftPolicy,
                     overrides,
                 },
+            };
+        });
+    };
+
+    const updateQrLifetime = (value: string) => {
+        const nextLifetime = parsePositiveNumberOr(value, 20);
+        setConfig((prev) => ({
+            ...prev,
+            qrTokenLifetimeSeconds: Math.max(nextLifetime, minimumQrTokenLifetimeSeconds(prev.qrRefreshSeconds)),
+            qrRefreshSeconds: clampQrRefreshSeconds(
+                prev.qrRefreshSeconds,
+                Math.max(nextLifetime, minimumQrTokenLifetimeSeconds(prev.qrRefreshSeconds)),
+            ),
+        }));
+    };
+
+    const updateQrRefresh = (value: string) => {
+        const requestedRefresh = parsePositiveNumberOr(value, 8);
+        setConfig((prev) => {
+            const nextLifetime = Math.max(prev.qrTokenLifetimeSeconds, minimumQrTokenLifetimeSeconds(requestedRefresh));
+            return {
+                ...prev,
+                qrTokenLifetimeSeconds: nextLifetime,
+                qrRefreshSeconds: clampQrRefreshSeconds(requestedRefresh, nextLifetime),
             };
         });
     };
@@ -237,19 +274,27 @@ export const AppSettings: React.FC = () => {
                                 <label>QR อายุ (วินาที)</label>
                                 <input
                                     type="number"
+                                    min={1}
                                     value={config.qrTokenLifetimeSeconds}
-                                    onChange={(event) => setConfig((prev) => ({ ...prev, qrTokenLifetimeSeconds: parseNumberOr(event.target.value, 20) }))}
+                                    onChange={(event) => updateQrLifetime(event.target.value)}
                                 />
                             </div>
                             <div>
                                 <label>QR Refresh ทุก (วินาที)</label>
                                 <input
                                     type="number"
+                                    min={1}
+                                    max={clampQrRefreshSeconds(config.qrTokenLifetimeSeconds, config.qrTokenLifetimeSeconds)}
                                     value={config.qrRefreshSeconds}
-                                    onChange={(event) => setConfig((prev) => ({ ...prev, qrRefreshSeconds: parseNumberOr(event.target.value, 8) }))}
+                                    onChange={(event) => updateQrRefresh(event.target.value)}
                                 />
                             </div>
                         </div>
+                        <p className="panel-muted">
+                            QR จะเปลี่ยนบนจอทุก {config.qrRefreshSeconds} วินาทีตามที่ตั้งค่า และระบบจะบังคับอายุ QR ไม่น้อยกว่า {minimumQrLifetime} วินาที
+                            เพื่อให้ช่วงคนสแกนหนาแน่นยังใช้ QR ที่เพิ่งเปลี่ยนรอบได้ต่ออีกอย่างน้อย {MIN_QR_TOKEN_VALIDITY_BUFFER_SECONDS} วินาที
+                            โดยยังคงเปลี่ยนก่อนหมดอายุอย่างน้อย {MIN_QR_REFRESH_LEAD_SECONDS} วินาที
+                        </p>
                     </section>
 
                     <section className="panel">
