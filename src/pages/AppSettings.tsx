@@ -7,10 +7,10 @@ import {
     MIN_QR_TOKEN_VALIDITY_BUFFER_SECONDS,
     minimumQrTokenLifetimeSeconds,
 } from '../services/appSettingsService';
-import type { LatePenaltyRule } from '../types/app';
+import type { AppSystemConfig, LatePenaltyRule } from '../types/app';
 import { controlDayForMonth, monthKey } from '../utils/shiftUtils';
 
-type SettingsTab = 'shift' | 'late' | 'employee-options';
+type SettingsTab = 'shift' | 'late' | 'employee-options' | 'telegram';
 type EmployeeOptionKey = 'departments' | 'positions' | 'statuses';
 
 const createLateRuleId = (): string => {
@@ -212,6 +212,19 @@ export const AppSettings: React.FC = () => {
         });
     };
 
+    const updateTelegramRound = (
+        roundId: string,
+        updater: (round: AppSystemConfig['telegramCheckInSummary']['rounds'][number]) => AppSystemConfig['telegramCheckInSummary']['rounds'][number],
+    ) => {
+        setConfig((prev) => ({
+            ...prev,
+            telegramCheckInSummary: {
+                ...prev.telegramCheckInSummary,
+                rounds: prev.telegramCheckInSummary.rounds.map((round) => (round.id === roundId ? updater(round) : round)),
+            },
+        }));
+    };
+
     const optionGroups: Array<{ key: EmployeeOptionKey; label: string }> = [
         { key: 'departments', label: 'แผนก' },
         { key: 'positions', label: 'ตำแหน่ง' },
@@ -242,6 +255,13 @@ export const AppSettings: React.FC = () => {
                         onClick={() => setActiveTab('employee-options')}
                     >
                         ตั้งค่าตัวเลือก
+                    </button>
+                    <button
+                        type="button"
+                        className={`settings-subnav-btn ${activeTab === 'telegram' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('telegram')}
+                    >
+                        Telegram
                     </button>
                 </div>
             </section>
@@ -515,6 +535,110 @@ export const AppSettings: React.FC = () => {
                             </div>
                         </div>
                     ))}
+                </section>
+            ) : null}
+
+            {activeTab === 'telegram' ? (
+                <section className="panel">
+                    <div className="panel-head">
+                        <h3>Telegram แจ้งเตือนสรุปเช็กอิน</h3>
+                    </div>
+
+                    <p className="panel-muted">
+                        ระบบจะส่งสรุปจำนวนคนเช็กอินตามช่วงเวลาแต่ละรอบ โดยใช้ Cron endpoint บน Vercel
+                    </p>
+
+                    <div className="filter-grid">
+                        <div>
+                            <label>เปิดใช้งานแจ้งเตือน Telegram</label>
+                            <select
+                                value={config.telegramCheckInSummary.enabled ? 'on' : 'off'}
+                                onChange={(event) => setConfig((prev) => ({
+                                    ...prev,
+                                    telegramCheckInSummary: {
+                                        ...prev.telegramCheckInSummary,
+                                        enabled: event.target.value === 'on',
+                                    },
+                                }))}
+                            >
+                                <option value="off">ปิด</option>
+                                <option value="on">เปิด</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="late-rule-list" style={{ marginTop: '1rem' }}>
+                        {config.telegramCheckInSummary.rounds.map((round, index) => (
+                            <div key={round.id} className="late-rule-card">
+                                <div className="panel-head" style={{ marginBottom: '0.45rem' }}>
+                                    <strong>รอบที่ {index + 1}</strong>
+                                </div>
+
+                                <div className="filter-grid late-rule-grid">
+                                    <div>
+                                        <label>ชื่อรอบ</label>
+                                        <input
+                                            value={round.label}
+                                            onChange={(event) => updateTelegramRound(round.id, (prev) => ({
+                                                ...prev,
+                                                label: event.target.value,
+                                            }))}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>เริ่มต้น</label>
+                                        <input
+                                            type="time"
+                                            value={round.startTime}
+                                            onChange={(event) => updateTelegramRound(round.id, (prev) => ({
+                                                ...prev,
+                                                startTime: event.target.value,
+                                            }))}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>ถึง</label>
+                                        <input
+                                            type="time"
+                                            value={round.endTime}
+                                            onChange={(event) => updateTelegramRound(round.id, (prev) => ({
+                                                ...prev,
+                                                endTime: event.target.value,
+                                            }))}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>ส่งเวลา</label>
+                                        <input
+                                            type="time"
+                                            value={round.sendTime}
+                                            onChange={(event) => updateTelegramRound(round.id, (prev) => ({
+                                                ...prev,
+                                                sendTime: event.target.value,
+                                            }))}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>สถานะรอบ</label>
+                                        <select
+                                            value={round.enabled ? 'on' : 'off'}
+                                            onChange={(event) => updateTelegramRound(round.id, (prev) => ({
+                                                ...prev,
+                                                enabled: event.target.value === 'on',
+                                            }))}
+                                        >
+                                            <option value="off">ปิด</option>
+                                            <option value="on">เปิด</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <p className="panel-muted" style={{ marginTop: '0.8rem' }}>
+                        ต้องตั้งค่า environment บน Vercel เพิ่มเติม: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID และ CRON_SECRET
+                    </p>
                 </section>
             ) : null}
 

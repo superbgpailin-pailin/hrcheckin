@@ -48,6 +48,20 @@ export interface EmployeeFieldOptions {
     statuses: string[];
 }
 
+export interface TelegramCheckInRound {
+    id: string;
+    label: string;
+    startTime: string;
+    endTime: string;
+    sendTime: string;
+    enabled: boolean;
+}
+
+export interface TelegramCheckInSummaryConfig {
+    enabled: boolean;
+    rounds: TelegramCheckInRound[];
+}
+
 export interface AppSystemConfig {
     companyName: string;
     qrSecret: string;
@@ -58,6 +72,7 @@ export interface AppSystemConfig {
     shifts: ShiftDefinition[];
     controlShiftPolicy: ControlShiftPolicy;
     employeeFieldOptions: EmployeeFieldOptions;
+    telegramCheckInSummary: TelegramCheckInSummaryConfig;
 }
 
 export interface AppEmployee {

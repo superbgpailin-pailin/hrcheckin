@@ -1,5 +1,10 @@
 import { supabase } from '../lib/supabaseClient';
-import { DEFAULT_CONFIG, DEFAULT_EMPLOYEE_FIELD_OPTIONS, DEFAULT_LATE_RULES } from '../data/appDefaults';
+import {
+    DEFAULT_CONFIG,
+    DEFAULT_EMPLOYEE_FIELD_OPTIONS,
+    DEFAULT_LATE_RULES,
+    DEFAULT_TELEGRAM_CHECKIN_SUMMARY,
+} from '../data/appDefaults';
 import type { AppSystemConfig } from '../types/app';
 import { getErrorMessage, isSchemaMissingError, withReadRetry } from '../utils/supabaseUtils';
 
@@ -62,6 +67,60 @@ const cloneDefaultEmployeeFieldOptions = (): AppSystemConfig['employeeFieldOptio
         positions: [...DEFAULT_EMPLOYEE_FIELD_OPTIONS.positions],
         roles: [...DEFAULT_EMPLOYEE_FIELD_OPTIONS.roles],
         statuses: [...DEFAULT_EMPLOYEE_FIELD_OPTIONS.statuses],
+    };
+};
+
+const cloneDefaultTelegramCheckInSummary = (): AppSystemConfig['telegramCheckInSummary'] => {
+    return {
+        enabled: DEFAULT_TELEGRAM_CHECKIN_SUMMARY.enabled,
+        rounds: DEFAULT_TELEGRAM_CHECKIN_SUMMARY.rounds.map((round) => ({ ...round })),
+    };
+};
+
+const normalizeTimeInput = (value: unknown, fallback: string): string => {
+    const raw = String(value || '').trim();
+    const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) {
+        return fallback;
+    }
+
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (
+        !Number.isFinite(hours)
+        || !Number.isFinite(minutes)
+        || hours < 0
+        || hours > 23
+        || minutes < 0
+        || minutes > 59
+    ) {
+        return fallback;
+    }
+
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
+const normalizeTelegramCheckInSummary = (
+    summary?: Partial<AppSystemConfig['telegramCheckInSummary']>,
+): AppSystemConfig['telegramCheckInSummary'] => {
+    const defaults = cloneDefaultTelegramCheckInSummary();
+    const sourceRounds = Array.isArray(summary?.rounds) && summary.rounds.length > 0
+        ? summary.rounds
+        : defaults.rounds;
+
+    return {
+        enabled: Boolean(summary?.enabled ?? defaults.enabled),
+        rounds: sourceRounds.map((round, index) => {
+            const fallback = defaults.rounds[index] || defaults.rounds[defaults.rounds.length - 1];
+            return {
+                id: String(round?.id || fallback.id || `round-${index + 1}`),
+                label: String(round?.label || fallback.label || `รอบ ${index + 1}`),
+                startTime: normalizeTimeInput(round?.startTime, fallback.startTime),
+                endTime: normalizeTimeInput(round?.endTime, fallback.endTime),
+                sendTime: normalizeTimeInput(round?.sendTime, fallback.sendTime),
+                enabled: Boolean(round?.enabled ?? fallback.enabled),
+            };
+        }),
     };
 };
 
@@ -151,6 +210,7 @@ export const normalizeAppSystemConfig = (input?: Partial<AppSystemConfig>): AppS
                 overrides: { ...DEFAULT_CONFIG.controlShiftPolicy.overrides },
             },
             employeeFieldOptions: cloneDefaultEmployeeFieldOptions(),
+            telegramCheckInSummary: cloneDefaultTelegramCheckInSummary(),
         };
     }
 
@@ -172,6 +232,7 @@ export const normalizeAppSystemConfig = (input?: Partial<AppSystemConfig>): AppS
             ? input.shifts.map((shift) => ({ ...shift }))
             : cloneDefaultShifts(),
         employeeFieldOptions: normalizeEmployeeFieldOptions(input.employeeFieldOptions),
+        telegramCheckInSummary: normalizeTelegramCheckInSummary(input.telegramCheckInSummary),
     };
 };
 

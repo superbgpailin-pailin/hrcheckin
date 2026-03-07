@@ -63,6 +63,36 @@ export const DEFAULT_EMPLOYEE_FIELD_OPTIONS: AppSystemConfig['employeeFieldOptio
     statuses: ['Active', 'OnLeave', 'Resigned'],
 };
 
+export const DEFAULT_TELEGRAM_CHECKIN_SUMMARY: AppSystemConfig['telegramCheckInSummary'] = {
+    enabled: false,
+    rounds: [
+        {
+            id: 'round-1',
+            label: 'รอบ 1',
+            startTime: '08:00',
+            endTime: '10:00',
+            sendTime: '10:05',
+            enabled: true,
+        },
+        {
+            id: 'round-2',
+            label: 'รอบ 2',
+            startTime: '10:01',
+            endTime: '14:00',
+            sendTime: '14:05',
+            enabled: true,
+        },
+        {
+            id: 'round-3',
+            label: 'รอบ 3',
+            startTime: '14:01',
+            endTime: '18:00',
+            sendTime: '18:05',
+            enabled: true,
+        },
+    ],
+};
+
 export const DEFAULT_CONFIG: AppSystemConfig = {
     companyName: 'HR CheckIn',
     qrSecret: 'CHANGE_ME_QR_SECRET_2026',
@@ -76,6 +106,7 @@ export const DEFAULT_CONFIG: AppSystemConfig = {
         overrides: {},
     },
     employeeFieldOptions: DEFAULT_EMPLOYEE_FIELD_OPTIONS,
+    telegramCheckInSummary: DEFAULT_TELEGRAM_CHECKIN_SUMMARY,
 };
 
 export const FALLBACK_EMPLOYEES: AppEmployee[] = [

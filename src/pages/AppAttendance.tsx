@@ -315,17 +315,13 @@ export const AppAttendance: React.FC = () => {
                                             {record.photoUrl ? (
                                                 <button
                                                     type="button"
-                                                    className="image-preview-trigger attendance-selfie-trigger"
+                                                    className="btn-muted"
                                                     onClick={() => setPreviewPhoto({
                                                         src: record.photoUrl,
                                                         alt: `${record.employeeId} check-in photo`,
                                                     })}
                                                 >
-                                                    <img
-                                                        src={record.photoUrl}
-                                                        alt={`${record.employeeId} check-in photo`}
-                                                        className="attendance-selfie-thumb"
-                                                    />
+                                                    View photo
                                                 </button>
                                             ) : (
                                                 <div className="panel-muted">-</div>

@@ -61,6 +61,7 @@ interface AttendanceFilters {
 
 interface AttendanceLoadOptions {
     useCache?: boolean;
+    rowLimit?: number;
 }
 
 interface AttendanceCacheEntry {
@@ -99,6 +100,8 @@ const LEGACY_ATTENDANCE_SELECT_COLUMNS_CACHE_KEYS = ['hrcheckin_attendance_selec
 const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v2';
 const ATTENDANCE_CACHE_TTL_MS = 30 * 1000;
 const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v4';
+const ATTENDANCE_DEFAULT_ROW_LIMIT = 10000;
+const ATTENDANCE_MAX_RANGE_DAYS = 120;
 let resolvedAttendanceSelectColumns = [...attendanceSelectColumns];
 let legacyAttendanceCacheCleared = false;
 
@@ -360,6 +363,50 @@ const shiftDateInputByDays = (dateInput: string, days: number): string => {
     return shifted.toISOString().slice(0, 10);
 };
 
+const dateInputToUtcDate = (dateInput: string): Date => {
+    const [yearRaw, monthRaw, dayRaw] = dateInput.split('-');
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    const day = Number(dayRaw);
+
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+        return new Date(Number.NaN);
+    }
+
+    return new Date(Date.UTC(year, month - 1, day));
+};
+
+const rangeDaysInclusive = (fromDateInput: string, toDateInput: string): number => {
+    const fromDate = dateInputToUtcDate(fromDateInput);
+    const toDate = dateInputToUtcDate(toDateInput);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+        throw new Error('Invalid date filter.');
+    }
+
+    return Math.floor((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+};
+
+const normalizeFilters = (filters: AttendanceFilters): AttendanceFilters => {
+    const today = dayKeyBangkok(new Date().toISOString());
+    const from = filters.from || filters.to || today;
+    const to = filters.to || filters.from || today;
+
+    if (from > to) {
+        throw new Error('Invalid date range: from must be on or before to.');
+    }
+
+    const days = rangeDaysInclusive(from, to);
+    if (days > ATTENDANCE_MAX_RANGE_DAYS) {
+        throw new Error(`Date range cannot exceed ${ATTENDANCE_MAX_RANGE_DAYS} days.`);
+    }
+
+    return {
+        ...filters,
+        from,
+        to,
+    };
+};
+
 const bangkokRangeStartIso = (dateInput: string): string => {
     return `${dateInput}T00:00:00${BANGKOK_UTC_OFFSET}`;
 };
@@ -407,13 +454,15 @@ const loadRowsFromSupabase = async (
     options: AttendanceLoadOptions = {},
 ): Promise<NormalizedAttendanceRow[]> => {
     const useCache = options.useCache ?? true;
+    const rowLimit = Math.max(1, Math.min(options.rowLimit ?? ATTENDANCE_DEFAULT_ROW_LIMIT, ATTENDANCE_DEFAULT_ROW_LIMIT));
+    const normalizedFilters = normalizeFilters(filters);
     const cachedSelectColumns = readAttendanceSelectColumnsCache();
     if (cachedSelectColumns?.length) {
         resolvedAttendanceSelectColumns = cachedSelectColumns;
     }
 
     if (useCache) {
-        const cached = readAttendanceCache(filters);
+        const cached = readAttendanceCache(normalizedFilters);
         if (cached) {
             return cached;
         }
@@ -423,10 +472,11 @@ const loadRowsFromSupabase = async (
         let query = supabase
             .from(tableName)
             .select(selectColumns.join(', '))
-            .order('timestamp', { ascending: false });
+            .order('timestamp', { ascending: false })
+            .limit(rowLimit);
 
-        if (filters.employeeId) {
-            query = query.eq('employee_id', filters.employeeId);
+        if (normalizedFilters.employeeId) {
+            query = query.eq('employee_id', normalizedFilters.employeeId);
         }
 
         // Filter check_in only at the database level to reduce bandwidth
@@ -435,12 +485,12 @@ const loadRowsFromSupabase = async (
             query = query.or('type.neq.check_out,type.is.null');
         }
 
-        if (withTimestampFilter && filters.from) {
-            query = query.gte('timestamp', bangkokRangeStartIso(filters.from));
+        if (withTimestampFilter && normalizedFilters.from) {
+            query = query.gte('timestamp', bangkokRangeStartIso(normalizedFilters.from));
         }
 
-        if (withTimestampFilter && filters.to) {
-            query = query.lt('timestamp', bangkokRangeEndExclusiveIso(filters.to));
+        if (withTimestampFilter && normalizedFilters.to) {
+            query = query.lt('timestamp', bangkokRangeEndExclusiveIso(normalizedFilters.to));
         }
 
         const { data, error } = await withReadRetry(async () => {
@@ -485,11 +535,11 @@ const loadRowsFromSupabase = async (
         .filter((row) => row.employee_id)
         // check_out rows are filtered at DB level; this is a safety net for legacy data
         .filter((row) => row.type !== 'check_out')
-        .filter((row) => withinFilters(row, filters))
+        .filter((row) => withinFilters(row, normalizedFilters))
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     if (useCache) {
-        writeAttendanceCache(filters, normalizedRows);
+        writeAttendanceCache(normalizedFilters, normalizedRows);
     }
 
     return normalizedRows;
@@ -607,7 +657,7 @@ export const appAttendanceService = {
 
         const existingRows = await loadRowsFromSupabase(
             { employeeId: employee.id, from: todayKey, to: todayKey },
-            { useCache: false },
+            { useCache: false, rowLimit: 50 },
         ).catch(() => null);
         if (existingRows && hasDuplicateOnDay(existingRows, employee.id, nowIso)) {
             throw new Error(duplicateCheckInMessage);
