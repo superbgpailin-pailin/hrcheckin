@@ -2,6 +2,19 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+## Telegram Check-in Summary Scheduler
+
+Vercel Hobby allows only one cron execution per day, so this project uses a GitHub Actions schedule for three daily summary runs.
+
+Required GitHub repository secrets:
+
+- `TELEGRAM_SUMMARY_ENDPOINT` (example: `https://hrcheckin.vercel.app/api/telegram-checkin-summary`)
+- `CRON_SECRET` (must match the same `CRON_SECRET` value configured in Vercel environment variables)
+
+Workflow file:
+
+- `.github/workflows/telegram-checkin-summary.yml`
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
