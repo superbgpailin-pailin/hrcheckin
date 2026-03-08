@@ -172,6 +172,13 @@ export const AppDashboard: React.FC = () => {
                     return;
                 }
 
+                if (selectedRange.from === shiftFocusDate && selectedRange.to === shiftFocusDate) {
+                    const sharedResult = await shiftFocusPromise;
+                    setRangeRecords(sharedResult);
+                    setShiftFocusRecords(sharedResult);
+                    return;
+                }
+
                 const [rangeResult, shiftFocusResult] = await Promise.all([
                     appAttendanceService.listCheckIns(
                         config.shifts,

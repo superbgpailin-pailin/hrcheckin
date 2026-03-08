@@ -7,6 +7,7 @@ const LOG_TABLE = 'telegram_checkin_summary_logs';
 const BANGKOK_TIMEZONE = 'Asia/Bangkok';
 const BANGKOK_UTC_OFFSET = '+07:00';
 const SEND_WINDOW_MINUTES = 1;
+const TELEGRAM_HTTP_TIMEOUT_MS = 8000;
 
 interface TelegramCheckInRound {
     id: string;
@@ -139,6 +140,8 @@ const sendTelegramMessage = async (
     chatId: string,
     text: string,
 ): Promise<void> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TELEGRAM_HTTP_TIMEOUT_MS);
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: {
@@ -148,6 +151,9 @@ const sendTelegramMessage = async (
             chat_id: chatId,
             text,
         }),
+        signal: controller.signal,
+    }).finally(() => {
+        clearTimeout(timeout);
     });
 
     if (!response.ok) {
@@ -156,19 +162,33 @@ const sendTelegramMessage = async (
     }
 };
 
-export default async function handler(req: { method?: string; headers?: Record<string, string | undefined> }, res: { status: (code: number) => { json: (payload: unknown) => void } }): Promise<void> {
-    if (req.method !== 'GET') {
+const isDuplicateLogError = (message: string, code?: string): boolean => {
+    const normalized = String(message || '').toLowerCase();
+    return code === '23505'
+        || normalized.includes('duplicate key')
+        || normalized.includes('ux_telegram_checkin_summary_logs_date_round');
+};
+
+export default async function handler(
+    req: { method?: string; headers?: Record<string, string | string[] | undefined> },
+    res: { status: (code: number) => { json: (payload: unknown) => void } },
+): Promise<void> {
+    if (req.method !== 'POST') {
         res.status(405).json({ ok: false, message: 'Method not allowed' });
         return;
     }
 
     const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-        const authHeader = req.headers?.authorization || req.headers?.Authorization;
-        if (authHeader !== `Bearer ${cronSecret}`) {
-            res.status(401).json({ ok: false, message: 'Unauthorized' });
-            return;
-        }
+    if (!cronSecret) {
+        res.status(500).json({ ok: false, message: 'CRON_SECRET is required' });
+        return;
+    }
+
+    const authHeaderRaw = req.headers?.authorization || req.headers?.Authorization;
+    const authHeader = Array.isArray(authHeaderRaw) ? authHeaderRaw[0] : authHeaderRaw;
+    if (authHeader !== `Bearer ${cronSecret}`) {
+        res.status(401).json({ ok: false, message: 'Unauthorized' });
+        return;
     }
 
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -233,21 +253,35 @@ export default async function handler(req: { method?: string; headers?: Record<s
             continue;
         }
 
-        const existingLog = await supabase
+        const claimLog = await supabase
             .from(LOG_TABLE)
+            .insert([{
+                sent_date: range.rangeDate,
+                round_id: round.id,
+                round_label: round.label,
+                start_time: round.startTime,
+                end_time: round.endTime,
+                send_time: round.sendTime,
+                checkin_count: 0,
+                telegram_chat_id: '',
+                message_text: 'PENDING',
+            }])
             .select('id')
-            .eq('sent_date', range.rangeDate)
-            .eq('round_id', round.id)
             .limit(1)
             .maybeSingle();
 
-        if (existingLog.error) {
-            skipped.push({ roundId: round.id, reason: existingLog.error.message });
+        if (claimLog.error) {
+            if (isDuplicateLogError(claimLog.error.message, claimLog.error.code)) {
+                skipped.push({ roundId: round.id, reason: 'already_sent' });
+                continue;
+            }
+            skipped.push({ roundId: round.id, reason: claimLog.error.message });
             continue;
         }
 
-        if (existingLog.data?.id) {
-            skipped.push({ roundId: round.id, reason: 'already_sent' });
+        const claimLogId = claimLog.data?.id;
+        if (!claimLogId) {
+            skipped.push({ roundId: round.id, reason: 'log_claim_missing_id' });
             continue;
         }
 
@@ -261,6 +295,7 @@ export default async function handler(req: { method?: string; headers?: Record<s
 
         const countResult = await countQuery;
         if (countResult.error) {
+            await supabase.from(LOG_TABLE).delete().eq('id', claimLogId);
             skipped.push({ roundId: round.id, reason: countResult.error.message });
             continue;
         }
@@ -284,6 +319,7 @@ export default async function handler(req: { method?: string; headers?: Record<s
         try {
             await sendTelegramMessage(telegramBotToken, telegramChatId, message);
         } catch (error) {
+            await supabase.from(LOG_TABLE).delete().eq('id', claimLogId);
             skipped.push({
                 roundId: round.id,
                 reason: error instanceof Error ? error.message : 'telegram_send_failed',
@@ -291,22 +327,17 @@ export default async function handler(req: { method?: string; headers?: Record<s
             continue;
         }
 
-        const insertLog = await supabase
+        const updateLog = await supabase
             .from(LOG_TABLE)
-            .insert([{
-                sent_date: range.rangeDate,
-                round_id: round.id,
-                round_label: round.label,
-                start_time: round.startTime,
-                end_time: round.endTime,
-                send_time: round.sendTime,
+            .update({
                 checkin_count: checkInCount,
                 telegram_chat_id: telegramChatId,
                 message_text: message,
-            }]);
+            })
+            .eq('id', claimLogId);
 
-        if (insertLog.error) {
-            skipped.push({ roundId: round.id, reason: insertLog.error.message });
+        if (updateLog.error) {
+            skipped.push({ roundId: round.id, reason: updateLog.error.message });
             continue;
         }
 
