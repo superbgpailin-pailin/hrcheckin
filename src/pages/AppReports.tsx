@@ -152,10 +152,16 @@ const buildCalendarMonths = (
     fromDate: string,
     toDate: string,
     recordsByDay: Map<string, AttendanceSummaryRecord>,
+    holidayDateSet: Set<string>,
 ): Array<{
     key: string;
     label: string;
-    cells: Array<{ dateInput: string; inRange: boolean; record: AttendanceSummaryRecord | null } | null>;
+    cells: Array<{
+        dateInput: string;
+        inRange: boolean;
+        isHoliday: boolean;
+        record: AttendanceSummaryRecord | null;
+    } | null>;
 }> => {
     if (!fromDate || !toDate || fromDate > toDate) {
         return [];
@@ -168,7 +174,12 @@ const buildCalendarMonths = (
         const monthStart = `${monthKey}-01`;
         const monthEnd = endOfMonthInput(monthKey);
         const monthDates = buildDateRange(monthStart, monthEnd);
-        const cells: Array<{ dateInput: string; inRange: boolean; record: AttendanceSummaryRecord | null } | null> = [];
+        const cells: Array<{
+            dateInput: string;
+            inRange: boolean;
+            isHoliday: boolean;
+            record: AttendanceSummaryRecord | null;
+        } | null> = [];
 
         for (let index = 0; index < weekdayIndex(monthStart); index += 1) {
             cells.push(null);
@@ -179,6 +190,7 @@ const buildCalendarMonths = (
             cells.push({
                 dateInput,
                 inRange,
+                isHoliday: holidayDateSet.has(dateInput),
                 record: inRange ? recordsByDay.get(dateInput) || null : null,
             });
         });
@@ -214,6 +226,16 @@ export const AppReports: React.FC = () => {
     const [toDate, setToDate] = useState(today);
     const [employeeId, setEmployeeId] = useState('all');
     const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+    const allDaysInRange = useMemo(() => buildDateRange(fromDate, toDate), [fromDate, toDate]);
+    const holidayDateSet = useMemo(
+        () => new Set(config.officeHolidays.map((holiday) => holiday.date)),
+        [config.officeHolidays],
+    );
+    const workingDaysInRange = useMemo(
+        () => allDaysInRange.filter((dateInput) => !holidayDateSet.has(dateInput)),
+        [allDaysInRange, holidayDateSet],
+    );
+    const holidayDaysInRange = Math.max(0, allDaysInRange.length - workingDaysInRange.length);
 
     const load = async () => {
         setLoading(true);
@@ -229,6 +251,7 @@ export const AppReports: React.FC = () => {
                     to: toDate,
                     employeeId: employeeId === 'all' ? undefined : employeeId,
                 },
+                { detailLevel: 'lite' },
             );
             setRecords(result);
         } catch (loadError) {
@@ -268,6 +291,7 @@ export const AppReports: React.FC = () => {
                         to: calendarToDate,
                         employeeId: selectedEmployeeId,
                     },
+                    { detailLevel: 'lite' },
                 );
 
                 if (!cancelled) {
@@ -322,8 +346,7 @@ export const AppReports: React.FC = () => {
     }, [records]);
 
     const detailRows = useMemo<AttendanceEmployeeReportRow[]>(() => {
-        const daysInRange = buildDateRange(fromDate, toDate);
-        const totalDays = daysInRange.length;
+        const totalWorkingDays = workingDaysInRange.length;
         const targetEmployees = employeeId === 'all'
             ? employees
             : employees.filter((employee) => employee.id === employeeId);
@@ -335,7 +358,10 @@ export const AppReports: React.FC = () => {
                 const lateRecords = summary?.lateRecords || [];
                 const totalLateMinutes = summary?.totalLateMinutes || 0;
                 const onTimeCount = employeeRecords.length - lateRecords.length;
-                const missingDays = Math.max(0, totalDays - (summary?.checkInDaySet.size || 0));
+                const checkInWorkingDaySet = new Set(
+                    Array.from(summary?.checkInDaySet || []).filter((dateInput) => !holidayDateSet.has(dateInput)),
+                );
+                const missingDays = Math.max(0, totalWorkingDays - checkInWorkingDaySet.size);
                 const leaveDays = employee.status === 'OnLeave' ? missingDays : 0;
                 const absentDays = employee.status === 'Active' ? missingDays : 0;
                 const employeeName = [
@@ -363,7 +389,7 @@ export const AppReports: React.FC = () => {
             })
             .filter((row) => row.employmentStatus !== 'Resigned')
             .sort((a, b) => a.employeeId.localeCompare(b.employeeId));
-    }, [config.lateRules, employeeId, employees, fromDate, recordSummaryByEmployee, toDate]);
+    }, [config.lateRules, employeeId, employees, holidayDateSet, recordSummaryByEmployee, workingDaysInRange]);
 
     useEffect(() => {
         if (detailRows.length === 0) {
@@ -415,8 +441,8 @@ export const AppReports: React.FC = () => {
             return [];
         }
 
-        return buildCalendarMonths(calendarFromDate, calendarToDate, selectedEmployeeRecordsByDay);
-    }, [calendarFromDate, calendarToDate, selectedEmployeeId, selectedEmployeeRecordsByDay]);
+        return buildCalendarMonths(calendarFromDate, calendarToDate, selectedEmployeeRecordsByDay, holidayDateSet);
+    }, [calendarFromDate, calendarToDate, holidayDateSet, selectedEmployeeId, selectedEmployeeRecordsByDay]);
 
     const exportSummaryCsv = () => {
         const rows = detailRows.map((row) => ({
@@ -470,7 +496,7 @@ export const AppReports: React.FC = () => {
 
                 <div className="inline-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
                     <div className="panel-muted">
-                        Default range is today. Employees {detailStats.employees} | absent {detailStats.absentDays} | leave {detailStats.leaveDays}
+                        Default range is today. Employees {detailStats.employees} | absent {detailStats.absentDays} | leave {detailStats.leaveDays} | office holidays {holidayDaysInRange}
                     </div>
                     <button type="button" className="btn-muted" onClick={exportSummaryCsv}>Export Summary CSV</button>
                 </div>
@@ -575,6 +601,8 @@ export const AppReports: React.FC = () => {
                                                                                     const dayNumber = Number(cell.dateInput.slice(-2));
                                                                                     const toneClass = !cell.inRange
                                                                                         ? 'out-range'
+                                                                                        : cell.isHoliday && !cell.record
+                                                                                            ? 'holiday'
                                                                                         : cell.record
                                                                                             ? (cell.record.status === 'Late' ? 'late' : 'on-time')
                                                                                             : 'missing';
@@ -584,7 +612,9 @@ export const AppReports: React.FC = () => {
                                                                                             <div className="calendar-day-label">{dayNumber}</div>
 
                                                                                             {cell.inRange ? (
-                                                                                                cell.record ? (
+                                                                                                cell.isHoliday && !cell.record ? (
+                                                                                                    <span className="calendar-day-empty">Office holiday</span>
+                                                                                                ) : cell.record ? (
                                                                                                     <>
                                                                                                         <strong className="calendar-day-time">{timeLabelBangkok(cell.record.checkInAt)}</strong>
                                                                                                         <span className="calendar-day-shift">{cell.record.shiftLabel}</span>

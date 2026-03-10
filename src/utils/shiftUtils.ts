@@ -112,7 +112,12 @@ export const resolveShiftWindow = (checkInAt: Date, shift: ShiftDefinition): { s
 export const lateMinutesForCheckIn = (checkInAt: Date, shift: ShiftDefinition, graceMinutes: number): number => {
     const { start } = resolveShiftWindow(checkInAt, shift);
     const diff = Math.floor((checkInAt.getTime() - start.getTime()) / 60000);
-    return Math.max(0, diff - graceMinutes);
+    const lateStartMinute = Math.max(1, Math.floor(graceMinutes));
+    if (diff < lateStartMinute) {
+        return 0;
+    }
+
+    return diff - lateStartMinute + 1;
 };
 
 export const estimatedCheckoutAt = (checkInAt: Date, shift: ShiftDefinition): Date => {

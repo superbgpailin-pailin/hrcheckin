@@ -5,18 +5,32 @@ import { estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils'
 import { getErrorMessage, isTransportError, withReadRetry } from '../utils/supabaseUtils';
 
 const tableName = 'attendance';
-const attendanceSelectColumns = [
-    'id',
-    'employee_id',
-    'user_id',
-    'timestamp',
-    'created_at',
-    'status',
-    'shift_name',
-    'site_id',
-    'type',
-    'photo_url',
-];
+type AttendanceColumnProfile = 'full' | 'lite';
+
+const attendanceSelectColumnsByProfile: Record<AttendanceColumnProfile, string[]> = {
+    full: [
+        'id',
+        'employee_id',
+        'user_id',
+        'timestamp',
+        'created_at',
+        'status',
+        'shift_name',
+        'site_id',
+        'type',
+        'photo_url',
+    ],
+    lite: [
+        'id',
+        'employee_id',
+        'user_id',
+        'timestamp',
+        'created_at',
+        'status',
+        'shift_name',
+        'type',
+    ],
+};
 const duplicateCheckInMessage = 'You already checked in today.';
 const saveFailedMessage = 'Check-in could not be saved on the server. Please try again or contact admin.';
 const readFailedMessage = 'Database server is slow or unavailable. Please try again.';
@@ -62,6 +76,13 @@ interface AttendanceFilters {
 interface AttendanceLoadOptions {
     useCache?: boolean;
     rowLimit?: number;
+    profile?: AttendanceColumnProfile;
+}
+
+interface ListCheckInOptions {
+    detailLevel?: AttendanceColumnProfile;
+    useCache?: boolean;
+    rowLimit?: number;
 }
 
 interface AttendanceCacheEntry {
@@ -96,18 +117,35 @@ const optionalUpdateColumns = [
 ];
 
 const LEGACY_ATTENDANCE_CACHE_PREFIXES = ['hrcheckin_attendance_cache_v1'];
-const LEGACY_ATTENDANCE_SELECT_COLUMNS_CACHE_KEYS = ['hrcheckin_attendance_select_columns_v2', 'hrcheckin_attendance_select_columns_v3'];
+const LEGACY_ATTENDANCE_SELECT_COLUMNS_CACHE_KEYS = [
+    'hrcheckin_attendance_select_columns_v2',
+    'hrcheckin_attendance_select_columns_v3',
+    'hrcheckin_attendance_select_columns_v4',
+];
 const ATTENDANCE_CACHE_PREFIX = 'hrcheckin_attendance_cache_v2';
-const ATTENDANCE_CACHE_TTL_MS = 30 * 1000;
-const ATTENDANCE_SELECT_COLUMNS_CACHE_KEY = 'hrcheckin_attendance_select_columns_v4';
+const ATTENDANCE_CACHE_TTL_MS_BY_PROFILE: Record<AttendanceColumnProfile, number> = {
+    full: 30 * 1000,
+    lite: 2 * 60 * 1000,
+};
+const ATTENDANCE_SELECT_COLUMNS_CACHE_PREFIX = 'hrcheckin_attendance_select_columns_v5';
 const ATTENDANCE_DEFAULT_ROW_LIMIT = 10000;
 const ATTENDANCE_MAX_RANGE_DAYS = 120;
-let resolvedAttendanceSelectColumns = [...attendanceSelectColumns];
+const ATTENDANCE_NO_TIMESTAMP_MAX_RANGE_DAYS = 3;
+const ATTENDANCE_NO_TIMESTAMP_ROW_LIMIT = 1500;
+const resolvedAttendanceSelectColumnsByProfile: Record<AttendanceColumnProfile, string[]> = {
+    full: [...attendanceSelectColumnsByProfile.full],
+    lite: [...attendanceSelectColumnsByProfile.lite],
+};
 let legacyAttendanceCacheCleared = false;
 
-const attendanceCacheKey = (filters: AttendanceFilters): string => {
+const selectColumnsCacheKey = (profile: AttendanceColumnProfile): string => {
+    return `${ATTENDANCE_SELECT_COLUMNS_CACHE_PREFIX}:${profile}`;
+};
+
+const attendanceCacheKey = (filters: AttendanceFilters, profile: AttendanceColumnProfile): string => {
     return [
         ATTENDANCE_CACHE_PREFIX,
+        profile,
         filters.from || '*',
         filters.to || '*',
         filters.employeeId || '*',
@@ -141,10 +179,14 @@ const clearLegacyAttendanceCache = (): void => {
     legacyAttendanceCacheCleared = true;
 };
 
-const readAttendanceCache = (filters: AttendanceFilters): NormalizedAttendanceRow[] | null => {
+const readAttendanceCache = (
+    filters: AttendanceFilters,
+    profile: AttendanceColumnProfile,
+): NormalizedAttendanceRow[] | null => {
     clearLegacyAttendanceCache();
+    const ttlMs = ATTENDANCE_CACHE_TTL_MS_BY_PROFILE[profile];
     try {
-        const raw = localStorage.getItem(attendanceCacheKey(filters));
+        const raw = localStorage.getItem(attendanceCacheKey(filters, profile));
         if (!raw) {
             return null;
         }
@@ -154,8 +196,8 @@ const readAttendanceCache = (filters: AttendanceFilters): NormalizedAttendanceRo
             return null;
         }
 
-        if (Date.now() - parsed.savedAt > ATTENDANCE_CACHE_TTL_MS) {
-            localStorage.removeItem(attendanceCacheKey(filters));
+        if (Date.now() - parsed.savedAt > ttlMs) {
+            localStorage.removeItem(attendanceCacheKey(filters, profile));
             return null;
         }
 
@@ -165,10 +207,10 @@ const readAttendanceCache = (filters: AttendanceFilters): NormalizedAttendanceRo
     }
 };
 
-const readAttendanceSelectColumnsCache = (): string[] | null => {
+const readAttendanceSelectColumnsCache = (profile: AttendanceColumnProfile): string[] | null => {
     clearLegacyAttendanceCache();
     try {
-        const raw = localStorage.getItem(ATTENDANCE_SELECT_COLUMNS_CACHE_KEY);
+        const raw = localStorage.getItem(selectColumnsCacheKey(profile));
         if (!raw) {
             return null;
         }
@@ -184,23 +226,27 @@ const readAttendanceSelectColumnsCache = (): string[] | null => {
     }
 };
 
-const writeAttendanceSelectColumnsCache = (columns: string[]): void => {
-    resolvedAttendanceSelectColumns = [...columns];
+const writeAttendanceSelectColumnsCache = (profile: AttendanceColumnProfile, columns: string[]): void => {
+    resolvedAttendanceSelectColumnsByProfile[profile] = [...columns];
 
     try {
-        localStorage.setItem(ATTENDANCE_SELECT_COLUMNS_CACHE_KEY, JSON.stringify(columns));
+        localStorage.setItem(selectColumnsCacheKey(profile), JSON.stringify(columns));
     } catch {
         // Ignore cache write failures. Query will still work with the in-memory list.
     }
 };
 
-const writeAttendanceCache = (filters: AttendanceFilters, rows: NormalizedAttendanceRow[]): void => {
+const writeAttendanceCache = (
+    filters: AttendanceFilters,
+    profile: AttendanceColumnProfile,
+    rows: NormalizedAttendanceRow[],
+): void => {
     const entry: AttendanceCacheEntry = {
         savedAt: Date.now(),
         rows,
     };
     try {
-        localStorage.setItem(attendanceCacheKey(filters), JSON.stringify(entry));
+        localStorage.setItem(attendanceCacheKey(filters, profile), JSON.stringify(entry));
     } catch {
         // Ignore cache write failures. The live query result is already available.
     }
@@ -324,6 +370,7 @@ const toSummary = (
     const shift = shiftByNameOrId(row.shift_name || '', shifts);
     const checkInAt = new Date(row.timestamp);
     const lateMinutes = lateMinutesForCheckIn(checkInAt, shift, graceMinutes);
+    const status: 'On Time' | 'Late' = lateMinutes > 0 ? 'Late' : 'On Time';
 
     return {
         id: row.id,
@@ -338,7 +385,7 @@ const toSummary = (
         checkInAt: row.timestamp,
         estimatedCheckOutAt: estimatedCheckoutAt(checkInAt, shift).toISOString(),
         lateMinutes,
-        status: row.status || (lateMinutes > 0 ? 'Late' : 'On Time'),
+        status,
         source: 'QR',
         kioskId: row.site_id || 'kiosk',
         photoUrl: row.photo_url || '',
@@ -434,6 +481,15 @@ const shouldRetryWithoutTimestampFilter = (message: string): boolean => {
     return normalized.includes('timestamp') && normalized.includes('column');
 };
 
+const canUseNoTimestampFallback = (filters: AttendanceFilters): boolean => {
+    if (!filters.employeeId || !filters.from || !filters.to) {
+        return false;
+    }
+
+    const days = rangeDaysInclusive(filters.from, filters.to);
+    return days <= ATTENDANCE_NO_TIMESTAMP_MAX_RANGE_DAYS;
+};
+
 const removeMissingSelectColumn = (
     columns: string[],
     message: string,
@@ -455,25 +511,33 @@ const loadRowsFromSupabase = async (
 ): Promise<NormalizedAttendanceRow[]> => {
     const useCache = options.useCache ?? true;
     const rowLimit = Math.max(1, Math.min(options.rowLimit ?? ATTENDANCE_DEFAULT_ROW_LIMIT, ATTENDANCE_DEFAULT_ROW_LIMIT));
+    const profile = options.profile ?? 'full';
     const normalizedFilters = normalizeFilters(filters);
-    const cachedSelectColumns = readAttendanceSelectColumnsCache();
+    const defaultSelectColumns = attendanceSelectColumnsByProfile[profile];
+    const cachedSelectColumns = readAttendanceSelectColumnsCache(profile);
     if (cachedSelectColumns?.length) {
-        resolvedAttendanceSelectColumns = cachedSelectColumns;
+        resolvedAttendanceSelectColumnsByProfile[profile] = cachedSelectColumns;
     }
 
     if (useCache) {
-        const cached = readAttendanceCache(normalizedFilters);
+        const cached = readAttendanceCache(normalizedFilters, profile);
         if (cached) {
             return cached;
         }
     }
 
     const queryRows = async (withTimestampFilter: boolean): Promise<AttendanceRow[]> => {
+        const queryRowLimit = withTimestampFilter
+            ? rowLimit
+            : Math.min(rowLimit, ATTENDANCE_NO_TIMESTAMP_ROW_LIMIT);
         let query = supabase
             .from(tableName)
             .select(selectColumns.join(', '))
-            .order('timestamp', { ascending: false })
-            .limit(rowLimit);
+            .limit(queryRowLimit);
+
+        if (withTimestampFilter) {
+            query = query.order('timestamp', { ascending: false });
+        }
 
         if (normalizedFilters.employeeId) {
             query = query.eq('employee_id', normalizedFilters.employeeId);
@@ -504,13 +568,13 @@ const loadRowsFromSupabase = async (
     };
 
     let rows: AttendanceRow[] = [];
-    let selectColumns = [...resolvedAttendanceSelectColumns];
+    let selectColumns = [...resolvedAttendanceSelectColumnsByProfile[profile]];
     let withTimestampFilter = true;
 
-    for (let attempt = 0; attempt < attendanceSelectColumns.length + 2; attempt += 1) {
+    for (let attempt = 0; attempt < defaultSelectColumns.length + 2; attempt += 1) {
         try {
             rows = await queryRows(withTimestampFilter);
-            writeAttendanceSelectColumnsCache(selectColumns);
+            writeAttendanceSelectColumnsCache(profile, selectColumns);
             break;
         } catch (error) {
             const message = getErrorMessage(error);
@@ -522,6 +586,11 @@ const loadRowsFromSupabase = async (
             }
 
             if (withTimestampFilter && shouldRetryWithoutTimestampFilter(message)) {
+                if (!canUseNoTimestampFallback(normalizedFilters)) {
+                    throw new Error(
+                        `Missing timestamp column. Fallback is restricted to employee-specific ranges up to ${ATTENDANCE_NO_TIMESTAMP_MAX_RANGE_DAYS} days to limit egress.`,
+                    );
+                }
                 withTimestampFilter = false;
                 continue;
             }
@@ -539,7 +608,7 @@ const loadRowsFromSupabase = async (
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     if (useCache) {
-        writeAttendanceCache(normalizedFilters, normalizedRows);
+        writeAttendanceCache(normalizedFilters, profile, normalizedRows);
     }
 
     return normalizedRows;
@@ -657,7 +726,7 @@ export const appAttendanceService = {
 
         const existingRows = await loadRowsFromSupabase(
             { employeeId: employee.id, from: todayKey, to: todayKey },
-            { useCache: false, rowLimit: 50 },
+            { useCache: false, rowLimit: 50, profile: 'lite' },
         ).catch(() => null);
         if (existingRows && hasDuplicateOnDay(existingRows, employee.id, nowIso)) {
             throw new Error(duplicateCheckInMessage);
@@ -713,10 +782,15 @@ export const appAttendanceService = {
         employees: AppEmployee[],
         graceMinutes: number,
         filters: AttendanceFilters = {},
+        options: ListCheckInOptions = {},
     ): Promise<AttendanceSummaryRecord[]> {
         const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
         try {
-            const remoteRows = await loadRowsFromSupabase(filters);
+            const remoteRows = await loadRowsFromSupabase(filters, {
+                useCache: options.useCache,
+                rowLimit: options.rowLimit,
+                profile: options.detailLevel || 'full',
+            });
             return remoteRows.map((row) => toSummary(row, shifts, employeeMap, graceMinutes));
         } catch (error) {
             const message = getErrorMessage(error);

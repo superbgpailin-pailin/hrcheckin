@@ -3,6 +3,7 @@ import {
     DEFAULT_CONFIG,
     DEFAULT_EMPLOYEE_FIELD_OPTIONS,
     DEFAULT_LATE_RULES,
+    DEFAULT_OFFICE_HOLIDAYS,
     DEFAULT_TELEGRAM_CHECKIN_SUMMARY,
 } from '../data/appDefaults';
 import type { AppSystemConfig } from '../types/app';
@@ -70,6 +71,10 @@ const cloneDefaultEmployeeFieldOptions = (): AppSystemConfig['employeeFieldOptio
     };
 };
 
+const cloneDefaultOfficeHolidays = (): AppSystemConfig['officeHolidays'] => {
+    return DEFAULT_OFFICE_HOLIDAYS.map((holiday) => ({ ...holiday }));
+};
+
 const cloneDefaultTelegramCheckInSummary = (): AppSystemConfig['telegramCheckInSummary'] => {
     return {
         enabled: DEFAULT_TELEGRAM_CHECKIN_SUMMARY.enabled,
@@ -98,6 +103,32 @@ const normalizeTimeInput = (value: unknown, fallback: string): string => {
     }
 
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
+const normalizeDateInput = (value: unknown): string | null => {
+    const raw = String(value || '').trim();
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+        return null;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+        return null;
+    }
+
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (
+        parsed.getUTCFullYear() !== year
+        || parsed.getUTCMonth() !== month - 1
+        || parsed.getUTCDate() !== day
+    ) {
+        return null;
+    }
+
+    return raw;
 };
 
 const normalizeTelegramCheckInSummary = (
@@ -159,6 +190,34 @@ const normalizeEmployeeFieldOptions = (
     };
 };
 
+const normalizeOfficeHolidays = (
+    holidays?: AppSystemConfig['officeHolidays'],
+): AppSystemConfig['officeHolidays'] => {
+    if (!holidays?.length) {
+        return cloneDefaultOfficeHolidays();
+    }
+
+    const seenDates = new Set<string>();
+    const normalized = holidays
+        .map((holiday, index) => {
+            const date = normalizeDateInput(holiday?.date);
+            if (!date || seenDates.has(date)) {
+                return null;
+            }
+
+            seenDates.add(date);
+            return {
+                id: String(holiday?.id || `office-holiday-${index + 1}`),
+                date,
+                label: String(holiday?.label || '').trim() || 'Office Holiday',
+            };
+        })
+        .filter((holiday): holiday is AppSystemConfig['officeHolidays'][number] => Boolean(holiday))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    return normalized;
+};
+
 const normalizeLateRules = (rules?: AppSystemConfig['lateRules']): AppSystemConfig['lateRules'] => {
     if (!rules?.length) {
         return cloneDefaultLateRules();
@@ -205,6 +264,7 @@ export const normalizeAppSystemConfig = (input?: Partial<AppSystemConfig>): AppS
             qrRefreshSeconds,
             shifts: cloneDefaultShifts(),
             lateRules: cloneDefaultLateRules(),
+            officeHolidays: cloneDefaultOfficeHolidays(),
             controlShiftPolicy: {
                 ...DEFAULT_CONFIG.controlShiftPolicy,
                 overrides: { ...DEFAULT_CONFIG.controlShiftPolicy.overrides },
@@ -220,6 +280,7 @@ export const normalizeAppSystemConfig = (input?: Partial<AppSystemConfig>): AppS
         qrTokenLifetimeSeconds,
         qrRefreshSeconds,
         lateRules: normalizeLateRules(input.lateRules),
+        officeHolidays: normalizeOfficeHolidays(input.officeHolidays),
         controlShiftPolicy: {
             ...DEFAULT_CONFIG.controlShiftPolicy,
             ...input.controlShiftPolicy,

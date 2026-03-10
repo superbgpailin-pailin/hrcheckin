@@ -70,6 +70,14 @@ interface PortalAccountRow {
     active: boolean | null;
 }
 
+interface PortalAccountListRow {
+    username: string;
+    display_name: string | null;
+    role: string | null;
+    photo_url: string | null;
+    active: boolean | null;
+}
+
 // Cached shape — no password stored to localStorage
 interface CachedPortalAccount {
     username: string;
@@ -210,10 +218,14 @@ const persistAccounts = (accounts: PortalAccount[]): void => {
 };
 
 
-const fromRow = (row: PortalAccountRow): PortalAccount | null => {
+const fromRow = (
+    row: PortalAccountRow | PortalAccountListRow,
+    options: { requirePassword?: boolean } = {},
+): PortalAccount | null => {
     const username = normalizeUsername(row.username);
-    const password = String(row.password || '');
-    if (!username || !password) {
+    const password = 'password' in row ? String(row.password || '') : '';
+    const requirePassword = options.requirePassword ?? false;
+    if (!username || (requirePassword && !password)) {
         return null;
     }
 
@@ -245,7 +257,18 @@ const toInsertRow = (account: PortalAccount): Record<string, string | boolean> =
 const dedupeAccounts = (accounts: PortalAccount[]): PortalAccount[] => {
     const map = new Map<string, PortalAccount>();
     accounts.forEach((account) => {
-        map.set(normalizeUsername(account.username), account);
+        const key = normalizeUsername(account.username);
+        const existing = map.get(key);
+        if (!existing) {
+            map.set(key, account);
+            return;
+        }
+
+        map.set(key, {
+            ...existing,
+            ...account,
+            password: account.password || existing.password,
+        });
     });
     return ensureMasterAccount(Array.from(map.values()));
 };
@@ -253,15 +276,15 @@ const dedupeAccounts = (accounts: PortalAccount[]): PortalAccount[] => {
 const fetchRemoteAccounts = async (): Promise<PortalAccount[]> => {
     const { data, error } = await supabase
         .from(ACCOUNTS_TABLE)
-        .select('username, display_name, role, photo_url, password, active')
+        .select('username, display_name, role, photo_url, active')
         .order('username', { ascending: true });
 
     if (error) {
         throw error;
     }
 
-    return ((data as PortalAccountRow[]) || [])
-        .map(fromRow)
+    return ((data as PortalAccountListRow[]) || [])
+        .map((row) => fromRow(row))
         .filter((item): item is PortalAccount => Boolean(item));
 };
 
@@ -278,7 +301,7 @@ const fetchRemoteAccountByUsername = async (username: string): Promise<PortalAcc
 
     const rows = (data as PortalAccountRow[] | null) || [];
     const mapped = rows
-        .map(fromRow)
+        .map((row) => fromRow(row, { requirePassword: true }))
         .filter((item): item is PortalAccount => Boolean(item));
 
     return mapped[0] || null;
@@ -658,7 +681,25 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         }
 
         const currentAccount = accounts[accountIndex];
-        if (currentAccount.password !== currentPassword) {
+        let verifiedPassword = currentAccount.password;
+        if (!accountsTableUnavailable) {
+            try {
+                const remoteAccount = await fetchRemoteAccountByUsername(currentAccount.username);
+                if (!remoteAccount) {
+                    return { success: false, message: 'ไม่พบบัญชีผู้ใช้บนเซิร์ฟเวอร์' };
+                }
+                verifiedPassword = remoteAccount.password;
+            } catch (error) {
+                const message = getErrorMessage(error);
+                if (isSchemaMissingError(message)) {
+                    accountsTableUnavailable = true;
+                } else {
+                    return { success: false, message };
+                }
+            }
+        }
+
+        if (verifiedPassword !== currentPassword) {
             return { success: false, message: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' };
         }
 

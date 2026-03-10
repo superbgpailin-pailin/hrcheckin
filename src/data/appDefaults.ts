@@ -63,6 +63,8 @@ export const DEFAULT_EMPLOYEE_FIELD_OPTIONS: AppSystemConfig['employeeFieldOptio
     statuses: ['Active', 'OnLeave', 'Resigned'],
 };
 
+export const DEFAULT_OFFICE_HOLIDAYS: AppSystemConfig['officeHolidays'] = [];
+
 export const DEFAULT_TELEGRAM_CHECKIN_SUMMARY: AppSystemConfig['telegramCheckInSummary'] = {
     enabled: false,
     rounds: [
@@ -100,6 +102,7 @@ export const DEFAULT_CONFIG: AppSystemConfig = {
     qrRefreshSeconds: 8,
     lateGraceMinutes: 15,
     lateRules: DEFAULT_LATE_RULES,
+    officeHolidays: DEFAULT_OFFICE_HOLIDAYS,
     shifts: DEFAULT_SHIFTS,
     controlShiftPolicy: {
         enabled: true,

@@ -10,8 +10,12 @@ import {
 import type { AppSystemConfig, LatePenaltyRule } from '../types/app';
 import { controlDayForMonth, monthKey } from '../utils/shiftUtils';
 
-type SettingsTab = 'shift' | 'late' | 'employee-options' | 'telegram';
+type SettingsTab = 'shift' | 'late' | 'office-holiday' | 'employee-options' | 'telegram';
 type EmployeeOptionKey = 'departments' | 'positions' | 'statuses';
+
+const todayBangkokDateInput = (): string => {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+};
 
 const createLateRuleId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -37,6 +41,10 @@ const parseNullableNumber = (value: string): number | null => {
         return null;
     }
     return parseNumberOr(value, 0);
+};
+
+const sortOfficeHolidays = (holidays: AppSystemConfig['officeHolidays']): AppSystemConfig['officeHolidays'] => {
+    return [...holidays].sort((a, b) => a.date.localeCompare(b.date));
 };
 
 const defaultLateRule = (fromMinutes = 0): LatePenaltyRule => {
@@ -156,6 +164,39 @@ export const AppSettings: React.FC = () => {
         });
     };
 
+    const updateOfficeHoliday = (
+        holidayId: string,
+        updater: (holiday: AppSystemConfig['officeHolidays'][number]) => AppSystemConfig['officeHolidays'][number],
+    ) => {
+        setConfig((prev) => ({
+            ...prev,
+            officeHolidays: sortOfficeHolidays(
+                prev.officeHolidays.map((holiday) => (holiday.id === holidayId ? updater(holiday) : holiday)),
+            ),
+        }));
+    };
+
+    const addOfficeHoliday = () => {
+        setConfig((prev) => ({
+            ...prev,
+            officeHolidays: sortOfficeHolidays([
+                ...prev.officeHolidays,
+                {
+                    id: createLateRuleId(),
+                    date: todayBangkokDateInput(),
+                    label: 'Office Holiday',
+                },
+            ]),
+        }));
+    };
+
+    const removeOfficeHoliday = (holidayId: string) => {
+        setConfig((prev) => ({
+            ...prev,
+            officeHolidays: prev.officeHolidays.filter((holiday) => holiday.id !== holidayId),
+        }));
+    };
+
     const submit = async () => {
         setSaving(true);
         setNotice('');
@@ -248,6 +289,13 @@ export const AppSettings: React.FC = () => {
                         onClick={() => setActiveTab('late')}
                     >
                         ตั้งค่ามาสาย
+                    </button>
+                    <button
+                        type="button"
+                        className={`settings-subnav-btn ${activeTab === 'office-holiday' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('office-holiday')}
+                    >
+                        วันหยุดออฟฟิศ
                     </button>
                     <button
                         type="button"
@@ -385,6 +433,9 @@ export const AppSettings: React.FC = () => {
                                 />
                             </div>
                         </div>
+                        <p className="panel-muted">
+                            ระบบจะคำนวณสถานะสายและนาทีสายย้อนหลังตามค่านี้อัตโนมัติทุกครั้งที่เปิดรายงาน
+                        </p>
                     </section>
 
                     <section className="panel">
@@ -486,6 +537,65 @@ export const AppSettings: React.FC = () => {
                         </div>
                     </section>
                 </>
+            ) : null}
+
+            {activeTab === 'office-holiday' ? (
+                <section className="panel">
+                    <div className="panel-head">
+                        <h3>วันหยุดออฟฟิศ (ยกเว้นเช็กอิน)</h3>
+                        <button type="button" className="btn-muted" onClick={addOfficeHoliday}>เพิ่มวันหยุด</button>
+                    </div>
+
+                    <p className="panel-muted">
+                        วันที่ที่กำหนดในเมนูนี้จะถูกยกเว้นการเช็กอิน และไม่นับเป็น absent/leave ในรายงาน
+                    </p>
+
+                    {config.officeHolidays.length === 0 ? (
+                        <p className="panel-muted">ยังไม่มีวันหยุดออฟฟิศที่ตั้งค่าไว้</p>
+                    ) : (
+                        <div className="late-rule-list">
+                            {config.officeHolidays.map((holiday, index) => (
+                                <div key={holiday.id} className="late-rule-card">
+                                    <div className="panel-head" style={{ marginBottom: '0.45rem' }}>
+                                        <strong>วันหยุดที่ {index + 1}</strong>
+                                        <button
+                                            type="button"
+                                            className="btn-danger"
+                                            onClick={() => removeOfficeHoliday(holiday.id)}
+                                        >
+                                            ลบ
+                                        </button>
+                                    </div>
+
+                                    <div className="filter-grid late-rule-grid">
+                                        <div>
+                                            <label>วันที่</label>
+                                            <input
+                                                type="date"
+                                                value={holiday.date}
+                                                onChange={(event) => updateOfficeHoliday(holiday.id, (prev) => ({
+                                                    ...prev,
+                                                    date: event.target.value,
+                                                }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label>หมายเหตุ</label>
+                                            <input
+                                                value={holiday.label}
+                                                onChange={(event) => updateOfficeHoliday(holiday.id, (prev) => ({
+                                                    ...prev,
+                                                    label: event.target.value,
+                                                }))}
+                                                placeholder="เช่น ระบบล่ม / วันหยุดพิเศษ"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </section>
             ) : null}
 
             {activeTab === 'employee-options' ? (

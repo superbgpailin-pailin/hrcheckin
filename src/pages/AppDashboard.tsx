@@ -122,6 +122,11 @@ export const AppDashboard: React.FC = () => {
         return employees.filter((employee) => employee.status === 'Active');
     }, [employees]);
 
+    const holidayDateSet = useMemo(
+        () => new Set(config.officeHolidays.map((holiday) => holiday.date)),
+        [config.officeHolidays],
+    );
+
     const activeEmployeeIds = useMemo(() => {
         return new Set(activeEmployees.map((employee) => employee.id));
     }, [activeEmployees]);
@@ -162,6 +167,7 @@ export const AppDashboard: React.FC = () => {
                     employees,
                     config.lateGraceMinutes,
                     { from: shiftFocusDate, to: shiftFocusDate },
+                    { detailLevel: 'lite' },
                 );
 
                 if (!selectedRange.from || !selectedRange.to || selectedRange.from > selectedRange.to) {
@@ -188,6 +194,7 @@ export const AppDashboard: React.FC = () => {
                             from: selectedRange.from,
                             to: selectedRange.to,
                         },
+                        { detailLevel: 'lite' },
                     ),
                     shiftFocusPromise,
                 ]);
@@ -210,12 +217,21 @@ export const AppDashboard: React.FC = () => {
         return buildDateRange(selectedRange.from, selectedRange.to);
     }, [selectedRange.from, selectedRange.to]);
 
+    const workingRangeDays = useMemo(() => {
+        return rangeDays.filter((dateInput) => !holidayDateSet.has(dateInput));
+    }, [holidayDateSet, rangeDays]);
+    const holidayDaysInRange = Math.max(0, rangeDays.length - workingRangeDays.length);
+
     const stats = useMemo(() => {
-        const filteredRecords = rangeRecords.filter((record) => activeEmployeeIds.has(record.employeeId));
+        const filteredRecords = rangeRecords.filter((record) => (
+            activeEmployeeIds.has(record.employeeId) && !holidayDateSet.has(dayKeyBangkok(record.checkInAt))
+        ));
         const uniqueCheckedInEmployees = new Set(filteredRecords.map((record) => record.employeeId));
         const lateRows = filteredRecords.filter((record) => record.status === 'Late');
         const lateEmployees = new Set(lateRows.map((record) => record.employeeId));
-        const absentValue = Math.max(0, activeEmployees.length - uniqueCheckedInEmployees.size);
+        const absentValue = workingRangeDays.length === 0
+            ? 0
+            : Math.max(0, activeEmployees.length - uniqueCheckedInEmployees.size);
 
         return {
             activeEmployees: activeEmployees.length,
@@ -226,7 +242,7 @@ export const AppDashboard: React.FC = () => {
                 ? Math.round(lateRows.reduce((sum, record) => sum + record.lateMinutes, 0) / lateRows.length)
                 : 0,
         };
-    }, [activeEmployeeIds, activeEmployees.length, rangeRecords]);
+    }, [activeEmployeeIds, activeEmployees.length, holidayDateSet, rangeRecords, workingRangeDays.length]);
 
     const trend = useMemo(() => {
         return rangeDays.map((dateInput) => {
@@ -241,6 +257,7 @@ export const AppDashboard: React.FC = () => {
     const maxTrend = Math.max(1, ...trend.map((item) => item.value));
 
     const shiftStatsToday = useMemo(() => {
+        const isShiftFocusHoliday = holidayDateSet.has(shiftFocusDate);
         return config.shifts.map((shift, index) => {
             const shiftRecords = shiftFocusRecords.filter((record) => record.shiftId === shift.id && activeEmployeeIds.has(record.employeeId));
             const checkedIn = new Set(shiftRecords.map((record) => record.employeeId));
@@ -249,19 +266,19 @@ export const AppDashboard: React.FC = () => {
                     .filter((record) => record.status === 'Late')
                     .map((record) => record.employeeId),
             );
-            const eligibleEmployees = eligibleEmployeesForShift(shift, activeEmployees);
+            const eligibleEmployees = isShiftFocusHoliday ? 0 : eligibleEmployeesForShift(shift, activeEmployees);
 
             return {
                 key: shift.id,
                 label: shift.label,
                 checkedIn: checkedIn.size,
                 late: late.size,
-                absent: Math.max(0, eligibleEmployees - checkedIn.size),
+                absent: isShiftFocusHoliday ? 0 : Math.max(0, eligibleEmployees - checkedIn.size),
                 shiftWindow: `${shift.start}-${shift.end}`,
                 accentClass: `shift-accent-${(index % 4) + 1}`,
             };
         });
-    }, [activeEmployeeIds, activeEmployees, config.shifts, shiftFocusRecords]);
+    }, [activeEmployeeIds, activeEmployees, config.shifts, holidayDateSet, shiftFocusDate, shiftFocusRecords]);
 
     const shiftSummaryLabel = filterMode === 'daily' ? shortDateLabel(shiftFocusDate) : 'Today';
 
@@ -331,6 +348,9 @@ export const AppDashboard: React.FC = () => {
                 </div>
 
                 <p className="panel-muted">Selected range: {selectedRangeLabel}</p>
+                {holidayDaysInRange > 0 ? (
+                    <p className="panel-muted">Office holidays excluded from absent: {holidayDaysInRange} day(s)</p>
+                ) : null}
                 {error ? <div className="form-error">{error}</div> : null}
             </section>
 

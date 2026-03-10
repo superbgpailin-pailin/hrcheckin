@@ -1014,6 +1014,11 @@ th {
     border-color: #fde68a;
 }
 
+.calendar-day.holiday {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+
 .calendar-day-label {
     font-weight: 700;
     color: #0f172a;
@@ -1034,6 +1039,10 @@ th {
     color: #b91c1c;
     font-size: 0.8rem;
     font-weight: 600;
+}
+
+.calendar-day.holiday .calendar-day-empty {
+    color: #1d4ed8;
 }
 
 /* Modal */

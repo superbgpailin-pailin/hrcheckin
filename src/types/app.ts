@@ -41,6 +41,12 @@ export interface ControlShiftPolicy {
     overrides: Record<string, string>;
 }
 
+export interface OfficeHoliday {
+    id: string;
+    date: string; // YYYY-MM-DD
+    label: string;
+}
+
 export interface EmployeeFieldOptions {
     departments: string[];
     positions: string[];
@@ -69,6 +75,7 @@ export interface AppSystemConfig {
     qrRefreshSeconds: number;
     lateGraceMinutes: number;
     lateRules: LatePenaltyRule[];
+    officeHolidays: OfficeHoliday[];
     shifts: ShiftDefinition[];
     controlShiftPolicy: ControlShiftPolicy;
     employeeFieldOptions: EmployeeFieldOptions;
