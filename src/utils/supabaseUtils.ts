@@ -5,9 +5,9 @@
  * and appProfileRequestService.
  */
 
-const READ_TIMEOUT_MS = 8000;
-const READ_RETRY_COUNT = 1;
-const TIMEOUT_MESSAGE = 'Database server is slow or unavailable. Please try again.';
+const READ_TIMEOUT_MS = 15000;
+const READ_RETRY_COUNT = 2;
+const TIMEOUT_MESSAGE = 'Database request timed out. Server is slow or unavailable. Please try again.';
 
 export const getErrorMessage = (error: unknown): string => {
     if (error instanceof Error) {
@@ -28,9 +28,13 @@ export const getErrorMessage = (error: unknown): string => {
 
 export const isTransportError = (message: string): boolean => {
     const normalized = message.trim().toLowerCase();
+    const timeoutMessage = TIMEOUT_MESSAGE.toLowerCase();
     return normalized === 'failed to fetch'
+        || normalized === timeoutMessage
         || normalized.includes('fetch')
         || normalized.includes('timeout')
+        || normalized.includes('timed out')
+        || normalized.includes('slow or unavailable')
         || normalized.includes('connection timed out')
         || normalized.includes('connection terminated')
         || normalized.includes('status 522')
@@ -52,14 +56,22 @@ export const withReadRetry = async <T>(
     let lastError: unknown = null;
 
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+        let timeoutHandle: ReturnType<typeof globalThis.setTimeout> | null = null;
         try {
-            return await Promise.race<T>([
+            const result = await Promise.race<T>([
                 operation(),
                 new Promise<T>((_, reject) => {
-                    globalThis.setTimeout(() => reject(new Error(TIMEOUT_MESSAGE)), timeoutMs);
+                    timeoutHandle = globalThis.setTimeout(() => reject(new Error(TIMEOUT_MESSAGE)), timeoutMs);
                 }),
             ]);
+            if (timeoutHandle) {
+                globalThis.clearTimeout(timeoutHandle);
+            }
+            return result;
         } catch (error) {
+            if (timeoutHandle) {
+                globalThis.clearTimeout(timeoutHandle);
+            }
             lastError = error;
             const message = getErrorMessage(error);
             if (!isTransportError(message) || attempt >= retryCount) {

@@ -15,6 +15,19 @@ Workflow file:
 
 - `.github/workflows/telegram-checkin-summary.yml`
 
+## Portal Admin Auth API
+
+Portal admin authentication now supports a server-side API route at `api/portal-admin-auth.ts`.
+Required environment variables:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `PORTAL_AUTH_TOKEN_SECRET` (recommended dedicated secret for admin session tokens)
+
+Fallback:
+
+- If `PORTAL_AUTH_TOKEN_SECRET` is not set, the API uses `CRON_SECRET`.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh

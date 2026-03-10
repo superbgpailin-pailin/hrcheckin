@@ -109,12 +109,12 @@ const TEXT = {
         invalidAuth: 'លេខកូដបុគ្គលិក ឬ PIN មិនត្រឹមត្រូវ ឬគណនីមិនសកម្ម',
         noShift: 'មិនមានវេនដែលអនុញ្ញាតសម្រាប់អ្នកប្រើនេះ',
         langBtn: 'TH',
-        duplicateTitle: 'ចុះវត្តម​ម្តាងត្តើត',
-        duplicateMsg: '្នៃនេះ លើក​បាន​ចុះវត្តម​័ទើ​។ មិន​អាច​ចុះវត្តម​ម្តាង​ទេតស្រាប​​បាន',
-        duplicateClose: 'យល់ក្រឮក',
-        successTitle: 'ចុះវត្តមប្រសប​ជោគ',
-        statusOnTime: 'ត្រង័​ម៉ោង',
-        statusLate: 'យឹត',
+        duplicateTitle: 'ចុះវត្តមានរួចហើយ',
+        duplicateMsg: 'ថ្ងៃនេះអ្នកបានចុះវត្តមានរួចហើយ មិនអាចចុះវត្តមានម្ដងទៀតបានទេ',
+        duplicateClose: 'យល់ព្រម',
+        successTitle: 'ចុះវត្តមានជោគជ័យ',
+        statusOnTime: 'ទាន់ម៉ោង',
+        statusLate: 'យឺត',
     },
 } as const;
 

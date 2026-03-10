@@ -137,6 +137,5 @@ export const formatThaiDateTime = (iso: string): string => {
 };
 
 export const dayKey = (iso: string): string => {
-    const parsed = new Date(iso);
-    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+    return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
 };

@@ -78,6 +78,22 @@ interface PortalAccountListRow {
     active: boolean | null;
 }
 
+interface PortalAuthApiAccount {
+    username: string;
+    displayName: string;
+    role: 'Master' | 'Admin';
+    photoUrl: string;
+    active: boolean;
+}
+
+interface PortalAuthApiResponse {
+    success: boolean;
+    message?: string;
+    code?: string;
+    account?: PortalAuthApiAccount;
+    sessionToken?: string;
+}
+
 // Cached shape — no password stored to localStorage
 interface CachedPortalAccount {
     username: string;
@@ -88,8 +104,13 @@ interface CachedPortalAccount {
 }
 
 const STORAGE_KEY_CURRENT_USER = 'hrcheckin_portal_user_v3';
+const STORAGE_KEY_SESSION_TOKEN = 'hrcheckin_portal_session_v1';
 const STORAGE_KEY_ACCOUNTS = 'hrcheckin_portal_accounts_v4'; // bumped — old v3 had passwords
 const ACCOUNTS_TABLE = 'portal_admin_accounts';
+const PORTAL_AUTH_API_ENDPOINT = '/api/portal-admin-auth';
+const PORTAL_AUTH_API_UNAVAILABLE_CODE = 'api_unavailable';
+const PORTAL_AUTH_API_UNAUTHORIZED_CODE = 'api_unauthorized';
+const PORTAL_AUTH_API_RETRY_MESSAGE = 'บริการยืนยันตัวตนไม่พร้อมใช้งาน โปรดลองอีกครั้ง';
 
 let accountsTableUnavailable = false;
 
@@ -130,6 +151,19 @@ const getErrorMessage = (error: unknown): string => {
     }
 
     return String(error || '');
+};
+
+const createPortalAuthApiError = (message: string, code: string): Error & { code: string } => {
+    const error = new Error(message) as Error & { code: string };
+    error.code = code;
+    return error;
+};
+
+const getPortalAuthApiErrorCode = (error: unknown): string => {
+    if (typeof error === 'object' && error && 'code' in error) {
+        return String((error as { code?: unknown }).code || '');
+    }
+    return '';
 };
 
 const ensureMasterAccount = (accounts: PortalAccount[]): PortalAccount[] => {
@@ -273,6 +307,58 @@ const dedupeAccounts = (accounts: PortalAccount[]): PortalAccount[] => {
     return ensureMasterAccount(Array.from(map.values()));
 };
 
+const fromApiAccount = (account: PortalAuthApiAccount): PortalAccount => {
+    return {
+        username: normalizeUsername(account.username),
+        displayName: String(account.displayName || account.username.toUpperCase()),
+        role: account.role === 'Master' ? 'Master' : 'Admin',
+        photoUrl: String(account.photoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(account.displayName || account.username)}&background=1e3a8a&color=fff`),
+        password: '',
+        active: Boolean(account.active),
+    };
+};
+
+const requestPortalAuthApi = async (
+    payload: Record<string, unknown>,
+    sessionToken?: string | null,
+): Promise<PortalAuthApiResponse> => {
+    let response: Response;
+    try {
+        response = await fetch(PORTAL_AUTH_API_ENDPOINT, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+            },
+            body: JSON.stringify(payload),
+        });
+    } catch {
+        throw createPortalAuthApiError('ไม่สามารถเชื่อมต่อบริการยืนยันตัวตนได้', PORTAL_AUTH_API_UNAVAILABLE_CODE);
+    }
+
+    if (response.status === 404 || response.status === 405) {
+        throw createPortalAuthApiError('บริการยืนยันตัวตนไม่พร้อมใช้งาน', PORTAL_AUTH_API_UNAVAILABLE_CODE);
+    }
+
+    let result: PortalAuthApiResponse = { success: false, message: 'ไม่สามารถอ่านผลลัพธ์จากบริการยืนยันตัวตน' };
+    try {
+        result = await response.json() as PortalAuthApiResponse;
+    } catch {
+        // Keep fallback result message above
+    }
+
+    const message = String(result.message || 'ไม่สามารถทำรายการได้');
+    if (!response.ok || !result.success) {
+        const code = String(result.code || '');
+        if (response.status === 401 || code === 'unauthorized' || code.startsWith('token_')) {
+            throw createPortalAuthApiError(message, PORTAL_AUTH_API_UNAUTHORIZED_CODE);
+        }
+        throw createPortalAuthApiError(message, code || 'api_error');
+    }
+
+    return result;
+};
+
 const fetchRemoteAccounts = async (): Promise<PortalAccount[]> => {
     const { data, error } = await supabase
         .from(ACCOUNTS_TABLE)
@@ -317,19 +403,6 @@ const insertRemoteAccount = async (account: PortalAccount): Promise<void> => {
     }
 };
 
-const updateRemoteAccountPassword = async (username: string, password: string): Promise<number> => {
-    const { error, count } = await supabase
-        .from(ACCOUNTS_TABLE)
-        .update({ password }, { count: 'exact' })
-        .eq('username', normalizeUsername(username));
-
-    if (error) {
-        throw error;
-    }
-
-    return typeof count === 'number' ? count : 0;
-};
-
 const updateRemoteAccount = async (username: string, payload: Record<string, string>): Promise<number> => {
     const { error, count } = await supabase
         .from(ACCOUNTS_TABLE)
@@ -364,6 +437,25 @@ interface PortalAuthProviderProps {
 export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children, enabled = true }) => {
     const [accounts, setAccounts] = useState<PortalAccount[]>(() => readStoredAccounts());
     const [portalUsername, setPortalUsername] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_CURRENT_USER));
+    const [portalSessionToken, setPortalSessionToken] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_SESSION_TOKEN));
+
+    const clearPortalSession = useCallback(() => {
+        setPortalUsername(null);
+        setPortalSessionToken(null);
+        localStorage.removeItem(STORAGE_KEY_CURRENT_USER);
+        localStorage.removeItem(STORAGE_KEY_SESSION_TOKEN);
+    }, []);
+
+    const setPortalSession = useCallback((username: string, sessionToken: string | null) => {
+        setPortalUsername(username);
+        setPortalSessionToken(sessionToken);
+        localStorage.setItem(STORAGE_KEY_CURRENT_USER, username);
+        if (sessionToken) {
+            localStorage.setItem(STORAGE_KEY_SESSION_TOKEN, sessionToken);
+        } else {
+            localStorage.removeItem(STORAGE_KEY_SESSION_TOKEN);
+        }
+    }, []);
 
     const reloadAccounts = useCallback(async (): Promise<void> => {
         if (accountsTableUnavailable) {
@@ -418,6 +510,8 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             return;
         }
 
+        // We intentionally trigger the async account refresh once when auth is enabled.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         void reloadAccounts();
     }, [enabled, reloadAccounts]);
 
@@ -440,7 +534,7 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             .map(toPortalUser);
     }, [accounts]);
 
-    const loginPortal = useCallback(async (username: string, password: string): Promise<LoginResult> => {
+    const legacyLoginPortal = useCallback(async (username: string, password: string): Promise<LoginResult> => {
         const normalized = normalizeUsername(username);
 
         if (!accountsTableUnavailable) {
@@ -461,12 +555,14 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
                     return { success: false, message: 'บัญชีถูกระงับการใช้งาน' };
                 }
 
+                if (remoteAccount.password.startsWith('scrypt$')) {
+                    return { success: false, message: 'ระบบยืนยันตัวตนฝั่งเซิร์ฟเวอร์ไม่พร้อมใช้งาน โปรดติดต่อผู้ดูแลระบบ' };
+                }
+
                 if (remoteAccount.password !== password) {
                     return { success: false, message: 'รหัสผ่านไม่ถูกต้อง' };
                 }
 
-                setPortalUsername(remoteAccount.username);
-                localStorage.setItem(STORAGE_KEY_CURRENT_USER, remoteAccount.username);
                 return { success: true };
             } catch (error) {
                 const message = getErrorMessage(error);
@@ -487,19 +583,63 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             return { success: false, message: 'บัญชีถูกระงับการใช้งาน' };
         }
 
+        if (account.password.startsWith('scrypt$')) {
+            return { success: false, message: 'ระบบยืนยันตัวตนฝั่งเซิร์ฟเวอร์ไม่พร้อมใช้งาน โปรดติดต่อผู้ดูแลระบบ' };
+        }
+
         if (account.password !== password) {
             return { success: false, message: 'รหัสผ่านไม่ถูกต้อง' };
         }
 
-        setPortalUsername(account.username);
-        localStorage.setItem(STORAGE_KEY_CURRENT_USER, account.username);
         return { success: true };
     }, [accounts]);
 
+    const loginPortal = useCallback(async (username: string, password: string): Promise<LoginResult> => {
+        const normalized = normalizeUsername(username);
+        const passwordInput = String(password || '');
+
+        if (!normalized || !passwordInput) {
+            return { success: false, message: 'กรุณาระบุ Username และ Password' };
+        }
+
+        try {
+            const apiResult = await requestPortalAuthApi({
+                action: 'login',
+                username: normalized,
+                password: passwordInput,
+            });
+
+            if (!apiResult.account || !apiResult.sessionToken) {
+                return { success: false, message: 'ผลลัพธ์จากระบบยืนยันตัวตนไม่สมบูรณ์' };
+            }
+
+            const authenticatedAccount = fromApiAccount(apiResult.account);
+            const nextAccounts = dedupeAccounts([
+                ...accounts.filter((item) => normalizeUsername(item.username) !== normalized),
+                authenticatedAccount,
+            ]);
+            setAccounts(nextAccounts);
+            persistAccounts(nextAccounts);
+            setPortalSession(authenticatedAccount.username, apiResult.sessionToken);
+            await reloadAccounts();
+            return { success: true, message: apiResult.message };
+        } catch (error) {
+            const apiErrorCode = getPortalAuthApiErrorCode(error);
+            if (apiErrorCode && apiErrorCode !== PORTAL_AUTH_API_UNAVAILABLE_CODE) {
+                return { success: false, message: getErrorMessage(error) };
+            }
+        }
+
+        const fallbackResult = await legacyLoginPortal(normalized, passwordInput);
+        if (fallbackResult.success) {
+            setPortalSession(normalized, null);
+        }
+        return fallbackResult;
+    }, [accounts, legacyLoginPortal, reloadAccounts, setPortalSession]);
+
     const logoutPortal = useCallback((): void => {
-        setPortalUsername(null);
-        localStorage.removeItem(STORAGE_KEY_CURRENT_USER);
-    }, []);
+        clearPortalSession();
+    }, [clearPortalSession]);
 
     const addPortalAdmin = useCallback(async (input: AddPortalAdminInput): Promise<AddPortalAdminResult> => {
         if (!portalUser || portalUser.role !== 'Master') {
@@ -523,36 +663,30 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             return { success: false, message: 'Username นี้ถูกใช้งานแล้ว' };
         }
 
-        const newAccount: PortalAccount = {
-            username,
-            displayName: displayName || username.toUpperCase(),
-            role: 'Admin',
-            photoUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName || username)}&background=1d4ed8&color=fff`,
-            password,
-            active: true,
-        };
-
-        if (!accountsTableUnavailable) {
-            try {
-                await insertRemoteAccount(newAccount);
-            } catch (error) {
-                const message = getErrorMessage(error);
-                if (isSchemaMissingError(message)) {
-                    accountsTableUnavailable = true;
-                } else if (message.toLowerCase().includes('duplicate key')) {
-                    return { success: false, message: 'Username นี้ถูกใช้งานแล้ว' };
-                } else {
-                    return { success: false, message };
-                }
+        try {
+            const apiResult = await requestPortalAuthApi(
+                {
+                    action: 'add_admin',
+                    username,
+                    displayName,
+                    password,
+                },
+                portalSessionToken,
+            );
+            await reloadAccounts();
+            return { success: true, message: apiResult.message || 'เพิ่มแอดมินเรียบร้อยแล้ว' };
+        } catch (error) {
+            const apiErrorCode = getPortalAuthApiErrorCode(error);
+            if (apiErrorCode === PORTAL_AUTH_API_UNAUTHORIZED_CODE) {
+                clearPortalSession();
+                return { success: false, message: 'เซสชันหมดอายุ โปรดเข้าสู่ระบบใหม่' };
             }
+            if (apiErrorCode === PORTAL_AUTH_API_UNAVAILABLE_CODE) {
+                return { success: false, message: PORTAL_AUTH_API_RETRY_MESSAGE };
+            }
+            return { success: false, message: getErrorMessage(error) || PORTAL_AUTH_API_RETRY_MESSAGE };
         }
-
-        const next = dedupeAccounts([...accounts, newAccount]);
-        setAccounts(next);
-        persistAccounts(next);
-        await reloadAccounts();
-        return { success: true, message: 'เพิ่มแอดมินเรียบร้อยแล้ว' };
-    }, [accounts, portalUser, reloadAccounts]);
+    }, [accounts, clearPortalSession, portalSessionToken, portalUser, reloadAccounts]);
 
     const updatePortalAdmin = useCallback(async (input: UpdatePortalAdminInput): Promise<UpdatePortalAdminResult> => {
         if (!portalUser || portalUser.role !== 'Master') {
@@ -580,6 +714,32 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         const nextPassword = (input.password || '').trim();
         if (nextPassword && nextPassword.length < 6) {
             return { success: false, message: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' };
+        }
+
+        try {
+            const apiResult = await requestPortalAuthApi(
+                {
+                    action: 'update_admin',
+                    username,
+                    displayName,
+                    password: nextPassword || undefined,
+                },
+                portalSessionToken,
+            );
+            await reloadAccounts();
+            return { success: true, message: apiResult.message || 'แก้ไขข้อมูลแอดมินเรียบร้อยแล้ว' };
+        } catch (error) {
+            const apiErrorCode = getPortalAuthApiErrorCode(error);
+            if (apiErrorCode === PORTAL_AUTH_API_UNAUTHORIZED_CODE) {
+                clearPortalSession();
+                return { success: false, message: 'เซสชันหมดอายุ โปรดเข้าสู่ระบบใหม่' };
+            }
+            if (apiErrorCode === PORTAL_AUTH_API_UNAVAILABLE_CODE && nextPassword) {
+                return { success: false, message: PORTAL_AUTH_API_RETRY_MESSAGE };
+            }
+            if (apiErrorCode && apiErrorCode !== PORTAL_AUTH_API_UNAVAILABLE_CODE) {
+                return { success: false, message: getErrorMessage(error) };
+            }
         }
 
         const nextPhotoUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=1d4ed8&color=fff`;
@@ -625,7 +785,7 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         persistAccounts(deduped);
         await reloadAccounts();
         return { success: true, message: 'แก้ไขข้อมูลแอดมินเรียบร้อยแล้ว' };
-    }, [accounts, portalUser, reloadAccounts]);
+    }, [accounts, clearPortalSession, portalSessionToken, portalUser, reloadAccounts]);
 
     const deletePortalAdmin = useCallback(async (usernameInput: string): Promise<DeletePortalAdminResult> => {
         if (!portalUser || portalUser.role !== 'Master') {
@@ -645,7 +805,31 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
 
         const target = accounts.find((account) => normalizeUsername(account.username) === username);
         if (!target) {
-            return { success: false, message: 'Admin account not found.' };
+            return { success: false, message: 'ไม่พบบัญชีแอดมินที่ต้องการลบ' };
+        }
+
+        try {
+            const apiResult = await requestPortalAuthApi(
+                {
+                    action: 'delete_admin',
+                    username,
+                },
+                portalSessionToken,
+            );
+            const next = accounts.filter((account) => normalizeUsername(account.username) !== username);
+            const deduped = dedupeAccounts(next);
+            setAccounts(deduped);
+            persistAccounts(deduped);
+            return { success: true, message: apiResult.message || 'ลบบัญชีแอดมินเรียบร้อยแล้ว' };
+        } catch (error) {
+            const apiErrorCode = getPortalAuthApiErrorCode(error);
+            if (apiErrorCode === PORTAL_AUTH_API_UNAUTHORIZED_CODE) {
+                clearPortalSession();
+                return { success: false, message: 'เซสชันหมดอายุ โปรดเข้าสู่ระบบใหม่' };
+            }
+            if (apiErrorCode && apiErrorCode !== PORTAL_AUTH_API_UNAVAILABLE_CODE) {
+                return { success: false, message: getErrorMessage(error) };
+            }
         }
 
         if (!accountsTableUnavailable) {
@@ -666,7 +850,7 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         setAccounts(deduped);
         persistAccounts(deduped);
         return { success: true, message: 'ลบบัญชีแอดมินเรียบร้อยแล้ว' };
-    }, [accounts, portalUser]);
+    }, [accounts, clearPortalSession, portalSessionToken, portalUser]);
 
     const changeOwnPassword = useCallback(async (input: ChangeOwnPasswordInput): Promise<ChangeOwnPasswordResult> => {
         if (!portalUser) {
@@ -680,78 +864,53 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             return { success: false, message: 'ไม่พบบัญชีผู้ใช้' };
         }
 
-        const currentAccount = accounts[accountIndex];
-        let verifiedPassword = currentAccount.password;
-        if (!accountsTableUnavailable) {
-            try {
-                const remoteAccount = await fetchRemoteAccountByUsername(currentAccount.username);
-                if (!remoteAccount) {
-                    return { success: false, message: 'ไม่พบบัญชีผู้ใช้บนเซิร์ฟเวอร์' };
-                }
-                verifiedPassword = remoteAccount.password;
-            } catch (error) {
-                const message = getErrorMessage(error);
-                if (isSchemaMissingError(message)) {
-                    accountsTableUnavailable = true;
-                } else {
-                    return { success: false, message };
-                }
-            }
-        }
-
-        if (verifiedPassword !== currentPassword) {
-            return { success: false, message: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' };
-        }
-
         if (newPassword.length < 6) {
             return { success: false, message: 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 6 ตัวอักษร' };
+        }
+
+        if (!currentPassword.trim()) {
+            return { success: false, message: 'กรุณากรอกรหัสผ่านปัจจุบัน' };
         }
 
         if (newPassword === currentPassword) {
             return { success: false, message: 'รหัสผ่านใหม่ต้องไม่ซ้ำรหัสผ่านเดิม' };
         }
 
-        if (!accountsTableUnavailable) {
-            try {
-                const updatedRows = await updateRemoteAccountPassword(currentAccount.username, newPassword);
-                if (updatedRows < 1) {
-                    const normalizedCurrentUsername = normalizeUsername(currentAccount.username);
-                    if (normalizedCurrentUsername === 'master') {
-                        return { success: false, message: 'Unable to update master password on server.' };
-                    }
+        try {
+            const apiResult = await requestPortalAuthApi(
+                {
+                    action: 'change_own_password',
+                    currentPassword,
+                    newPassword,
+                },
+                portalSessionToken,
+            );
 
-                    await insertRemoteAccount({
-                        ...currentAccount,
-                        password: newPassword,
-                    });
+            const next = accounts.map((account, index) => {
+                if (index !== accountIndex) {
+                    return account;
                 }
-            } catch (error) {
-                const message = getErrorMessage(error);
-                if (isSchemaMissingError(message)) {
-                    accountsTableUnavailable = true;
-                } else if (message.toLowerCase().includes('duplicate key')) {
-                    return { success: false, message: 'Password update was blocked by database policy.' };
-                } else {
-                    return { success: false, message };
-                }
+                return {
+                    ...account,
+                    password: newPassword,
+                };
+            });
+            const deduped = dedupeAccounts(next);
+            setAccounts(deduped);
+            persistAccounts(deduped);
+            return { success: true, message: apiResult.message || 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว' };
+        } catch (error) {
+            const apiErrorCode = getPortalAuthApiErrorCode(error);
+            if (apiErrorCode === PORTAL_AUTH_API_UNAUTHORIZED_CODE) {
+                clearPortalSession();
+                return { success: false, message: 'เซสชันหมดอายุ โปรดเข้าสู่ระบบใหม่' };
             }
+            if (apiErrorCode === PORTAL_AUTH_API_UNAVAILABLE_CODE) {
+                return { success: false, message: PORTAL_AUTH_API_RETRY_MESSAGE };
+            }
+            return { success: false, message: getErrorMessage(error) || PORTAL_AUTH_API_RETRY_MESSAGE };
         }
-
-        const next = accounts.map((account, index) => {
-            if (index !== accountIndex) {
-                return account;
-            }
-            return {
-                ...account,
-                password: newPassword,
-            };
-        });
-
-        const deduped = dedupeAccounts(next);
-        setAccounts(deduped);
-        persistAccounts(deduped);
-        return { success: true, message: 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว' };
-    }, [accounts, portalUser]);
+    }, [accounts, clearPortalSession, portalSessionToken, portalUser]);
 
     const value = useMemo<PortalAuthContextValue>(() => {
         return {

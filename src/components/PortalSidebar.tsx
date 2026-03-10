@@ -16,7 +16,6 @@ const MENU: Array<{ page: PortalPage; icon: string; label: string; masterOnly?: 
     { page: 'attendance', icon: '🕒', label: 'รายการเช็คอิน' },
     { page: 'reports', icon: 'R', label: 'รายงานสรุป' },
     { page: 'employees', icon: '👥', label: 'พนักงาน' },
-    { page: 'requests', icon: '🧾', label: 'คำขอพนักงาน' },
     { page: 'settings', icon: '⚙️', label: 'ตั้งค่า' },
     { page: 'admins', icon: '🔐', label: 'เพิ่มแอดมิน', masterOnly: true },
 ];

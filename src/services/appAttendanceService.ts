@@ -112,6 +112,7 @@ const optionalUpdateColumns = [
     'shift',
     'shift_name',
     'timestamp',
+    'check_in_time',
     'status',
     'photo_url',
 ];
@@ -526,6 +527,10 @@ const loadRowsFromSupabase = async (
         }
     }
 
+    let rows: AttendanceRow[] = [];
+    let selectColumns = [...resolvedAttendanceSelectColumnsByProfile[profile]];
+    let withTimestampFilter = true;
+
     const queryRows = async (withTimestampFilter: boolean): Promise<AttendanceRow[]> => {
         const queryRowLimit = withTimestampFilter
             ? rowLimit
@@ -566,10 +571,6 @@ const loadRowsFromSupabase = async (
 
         return (data as AttendanceRow[]) || [];
     };
-
-    let rows: AttendanceRow[] = [];
-    let selectColumns = [...resolvedAttendanceSelectColumnsByProfile[profile]];
-    let withTimestampFilter = true;
 
     for (let attempt = 0; attempt < defaultSelectColumns.length + 2; attempt += 1) {
         try {
@@ -836,9 +837,11 @@ export const appAttendanceService = {
 
         if (updates.shift_name) {
             payload.shift_name = updates.shift_name;
+            payload.shift = updates.shift_name;
         }
         if (updates.timestamp) {
             payload.timestamp = updates.timestamp;
+            payload.check_in_time = updates.timestamp;
         }
         if (updates.status) {
             payload.status = updates.status;

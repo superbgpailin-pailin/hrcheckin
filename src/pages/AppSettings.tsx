@@ -747,7 +747,7 @@ export const AppSettings: React.FC = () => {
                     </div>
 
                     <p className="panel-muted" style={{ marginTop: '0.8rem' }}>
-                        ต้องตั้งค่า environment บน Vercel เพิ่มเติม: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID และ CRON_SECRET
+                        ต้องตั้งค่า environment บน Vercel เพิ่มเติม: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRON_SECRET และ PORTAL_AUTH_TOKEN_SECRET
                     </p>
                 </section>
             ) : null}

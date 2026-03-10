@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppEmployees } from '../context/AppEmployeeContext';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { appAttendanceService } from '../services/appAttendanceService';
@@ -25,6 +25,25 @@ const timeLabelBangkok = (iso: string): string => {
 
 const dateInputToUtcDate = (dateInput: string): Date => {
     return new Date(`${dateInput}T00:00:00Z`);
+};
+
+const isValidDateInput = (dateInput: string): boolean => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+        return false;
+    }
+    return !Number.isNaN(dateInputToUtcDate(dateInput).getTime());
+};
+
+const normalizeEmployeeStartDate = (startDate: string, fallbackDate: string): string => {
+    const normalized = startDate.trim();
+    if (!isValidDateInput(normalized)) {
+        return fallbackDate;
+    }
+    return normalized;
+};
+
+const effectiveRangeStart = (rangeStart: string, employeeStartDate: string): string => {
+    return employeeStartDate > rangeStart ? employeeStartDate : rangeStart;
 };
 
 const buildDateRange = (from: string, to: string): string[] => {
@@ -208,11 +227,12 @@ const buildCalendarMonths = (
 };
 
 export const AppReports: React.FC = () => {
-    const { employees } = useAppEmployees();
+    const { employees, error: employeeError } = useAppEmployees();
     const { config } = useAppSettings();
 
     const today = todayBangkokDateInput();
     const currentMonth = today.slice(0, 7);
+    const defaultMonthStart = `${currentMonth}-01`;
     const calendarFromDate = `${currentMonth}-01`;
     const calendarToDate = endOfMonthInput(currentMonth);
 
@@ -222,7 +242,7 @@ export const AppReports: React.FC = () => {
     const [calendarLoading, setCalendarLoading] = useState(false);
     const [error, setError] = useState('');
     const [calendarError, setCalendarError] = useState('');
-    const [fromDate, setFromDate] = useState(today);
+    const [fromDate, setFromDate] = useState(defaultMonthStart);
     const [toDate, setToDate] = useState(today);
     const [employeeId, setEmployeeId] = useState('all');
     const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
@@ -237,7 +257,7 @@ export const AppReports: React.FC = () => {
     );
     const holidayDaysInRange = Math.max(0, allDaysInRange.length - workingDaysInRange.length);
 
-    const load = async () => {
+    const load = useCallback(async () => {
         setLoading(true);
         setError('');
 
@@ -260,12 +280,11 @@ export const AppReports: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [config.lateGraceMinutes, config.shifts, employeeId, employees, fromDate, toDate]);
 
     useEffect(() => {
         void load();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [config.lateGraceMinutes, config.shifts, employees, fromDate, toDate, employeeId]);
+    }, [load]);
 
     useEffect(() => {
         if (!selectedEmployeeId) {
@@ -346,7 +365,6 @@ export const AppReports: React.FC = () => {
     }, [records]);
 
     const detailRows = useMemo<AttendanceEmployeeReportRow[]>(() => {
-        const totalWorkingDays = workingDaysInRange.length;
         const targetEmployees = employeeId === 'all'
             ? employees
             : employees.filter((employee) => employee.id === employeeId);
@@ -358,10 +376,15 @@ export const AppReports: React.FC = () => {
                 const lateRecords = summary?.lateRecords || [];
                 const totalLateMinutes = summary?.totalLateMinutes || 0;
                 const onTimeCount = employeeRecords.length - lateRecords.length;
-                const checkInWorkingDaySet = new Set(
-                    Array.from(summary?.checkInDaySet || []).filter((dateInput) => !holidayDateSet.has(dateInput)),
+                const normalizedStartDate = normalizeEmployeeStartDate(employee.startDate, fromDate);
+                const employeeRangeStart = effectiveRangeStart(fromDate, normalizedStartDate);
+                const employeeWorkingDaySet = new Set(
+                    workingDaysInRange.filter((dateInput) => dateInput >= employeeRangeStart),
                 );
-                const missingDays = Math.max(0, totalWorkingDays - checkInWorkingDaySet.size);
+                const checkInWorkingDaySet = new Set(
+                    Array.from(summary?.checkInDaySet || []).filter((dateInput) => employeeWorkingDaySet.has(dateInput)),
+                );
+                const missingDays = Math.max(0, employeeWorkingDaySet.size - checkInWorkingDaySet.size);
                 const leaveDays = employee.status === 'OnLeave' ? missingDays : 0;
                 const absentDays = employee.status === 'Active' ? missingDays : 0;
                 const employeeName = [
@@ -389,7 +412,7 @@ export const AppReports: React.FC = () => {
             })
             .filter((row) => row.employmentStatus !== 'Resigned')
             .sort((a, b) => a.employeeId.localeCompare(b.employeeId));
-    }, [config.lateRules, employeeId, employees, holidayDateSet, recordSummaryByEmployee, workingDaysInRange]);
+    }, [config.lateRules, employeeId, employees, fromDate, recordSummaryByEmployee, workingDaysInRange]);
 
     useEffect(() => {
         if (detailRows.length === 0) {
@@ -496,12 +519,13 @@ export const AppReports: React.FC = () => {
 
                 <div className="inline-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
                     <div className="panel-muted">
-                        Default range is today. Employees {detailStats.employees} | absent {detailStats.absentDays} | leave {detailStats.leaveDays} | office holidays {holidayDaysInRange}
+                        Default range is current month (day 1 to today). Employees {detailStats.employees} | absent {detailStats.absentDays} | leave {detailStats.leaveDays} | office holidays {holidayDaysInRange}
                     </div>
                     <button type="button" className="btn-muted" onClick={exportSummaryCsv}>Export Summary CSV</button>
                 </div>
 
                 {error ? <div className="form-error">{error}</div> : null}
+                {employeeError ? <div className="form-error">{employeeError}</div> : null}
             </section>
 
             <section className="panel table-panel">

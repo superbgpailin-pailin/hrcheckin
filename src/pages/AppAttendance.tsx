@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppEmployees } from '../context/AppEmployeeContext';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { ImageLightbox } from '../components/ImageLightbox';
@@ -14,6 +14,51 @@ const getEmployeeLabel = (record: AttendanceSummaryRecord): string => {
 
 const todayBangkokDateInput = (): string => {
     return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+};
+
+const BANGKOK_UTC_OFFSET = '+07:00';
+
+const toBangkokEditInputs = (iso: string): { date: string; time: string } => {
+    const parsed = new Date(iso);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    }).formatToParts(parsed);
+
+    const valueByType = (type: Intl.DateTimeFormatPartTypes): string => {
+        return parts.find((part) => part.type === type)?.value || '';
+    };
+
+    const year = valueByType('year');
+    const month = valueByType('month');
+    const day = valueByType('day');
+    const hour = valueByType('hour');
+    const minute = valueByType('minute');
+
+    if (!year || !month || !day || !hour || !minute) {
+        return {
+            date: todayBangkokDateInput(),
+            time: '00:00',
+        };
+    }
+
+    return {
+        date: `${year}-${month}-${day}`,
+        time: `${hour}:${minute}`,
+    };
+};
+
+const bangkokDateTimeInputToIso = (dateInput: string, timeInput: string): string => {
+    const parsed = new Date(`${dateInput}T${timeInput}:00${BANGKOK_UTC_OFFSET}`);
+    if (Number.isNaN(parsed.getTime())) {
+        throw new Error('Invalid check-in date/time.');
+    }
+    return parsed.toISOString();
 };
 
 export const AppAttendance: React.FC = () => {
@@ -37,7 +82,7 @@ export const AppAttendance: React.FC = () => {
     const [editDate, setEditDate] = useState('');
     const [editTime, setEditTime] = useState('');
 
-    const load = async () => {
+    const load = useCallback(async () => {
         setLoading(true);
         setError('');
         setNotice('');
@@ -61,7 +106,7 @@ export const AppAttendance: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [config.lateGraceMinutes, config.shifts, employeeId, employees, fromDate, toDate]);
 
     const toggleSelection = (id: string) => {
         const next = new Set(selectedIds);
@@ -128,10 +173,9 @@ export const AppAttendance: React.FC = () => {
     const startEdit = (record: AttendanceSummaryRecord) => {
         setEditingRecord(record);
         setEditShiftId(record.shiftId);
-        const dt = new Date(record.checkInAt);
-        const pad = (n: number) => n.toString().padStart(2, '0');
-        setEditDate(`${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`);
-        setEditTime(`${pad(dt.getHours())}:${pad(dt.getMinutes())}`);
+        const nextInputs = toBangkokEditInputs(record.checkInAt);
+        setEditDate(nextInputs.date);
+        setEditTime(nextInputs.time);
     };
 
     const cancelEdit = () => {
@@ -149,7 +193,7 @@ export const AppAttendance: React.FC = () => {
 
         try {
             const shiftObj = config.shifts.find(s => s.id === editShiftId) || config.shifts[0];
-            const newIso = new Date(`${editDate}T${editTime}:00`).toISOString();
+            const newIso = bangkokDateTimeInputToIso(editDate, editTime);
             const nextLateMinutes = lateMinutesForCheckIn(new Date(newIso), shiftObj, config.lateGraceMinutes);
             const nextStatus = nextLateMinutes > 0 ? 'Late' : 'On Time';
 
@@ -170,8 +214,7 @@ export const AppAttendance: React.FC = () => {
 
     useEffect(() => {
         void load();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [config.lateGraceMinutes, config.shifts, employees, fromDate, toDate, employeeId]);
+    }, [load]);
 
     const stats = useMemo(() => {
         const unique = new Set(records.map((record) => `${record.employeeId}:${record.checkInAt.slice(0, 10)}:${record.shiftId}`));

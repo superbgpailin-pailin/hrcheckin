@@ -135,9 +135,10 @@ interface AppEmployeeProviderProps {
 }
 
 export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ children, enabled = true }) => {
-    const initialEmployees = readStoredEmployees();
+    const initialEmployees = useMemo(() => readStoredEmployees(), []);
+    const hasInitialEmployees = initialEmployees.length > 0;
     const [employees, setEmployees] = useState<AppEmployee[]>(initialEmployees);
-    const [loading, setLoading] = useState(() => enabled && initialEmployees.length === 0);
+    const [loading, setLoading] = useState(() => enabled && !hasInitialEmployees);
     const [error, setError] = useState<string | null>(null);
     const employeesRef = useRef<AppEmployee[]>(initialEmployees);
 
@@ -177,8 +178,8 @@ export const AppEmployeeProvider: React.FC<AppEmployeeProviderProps> = ({ childr
             return;
         }
 
-        void loadEmployees(initialEmployees.length > 0);
-    }, [enabled, initialEmployees.length, loadEmployees]);
+        void loadEmployees(hasInitialEmployees);
+    }, [enabled, hasInitialEmployees, loadEmployees]);
 
     const saveEmployee = useCallback(async (employee: AppEmployee, previousId = employee.id) => {
         await appEmployeeService.upsertEmployee(employee, previousId);

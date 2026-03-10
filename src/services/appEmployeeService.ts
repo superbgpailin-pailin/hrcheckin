@@ -50,6 +50,8 @@ const employeeSelectFields = [
     'emergency_contact_name',
     'emergency_contact_phone',
     'selfie_url',
+    'id_card_url',
+    'passport_url',
     'start_date',
     'default_shift_id',
 ].join(', ');

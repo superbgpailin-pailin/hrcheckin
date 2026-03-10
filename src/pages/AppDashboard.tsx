@@ -3,7 +3,7 @@ import { MetricCard } from '../components/MetricCard';
 import { useAppEmployees } from '../context/AppEmployeeContext';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { appAttendanceService } from '../services/appAttendanceService';
-import type { AttendanceSummaryRecord, ShiftDefinition } from '../types/app';
+import type { AttendanceSummaryRecord } from '../types/app';
 
 type DashboardFilterMode = 'daily' | 'monthly' | 'custom';
 
@@ -17,6 +17,25 @@ const todayBangkokMonthInput = (): string => {
 
 const dateInputToUtcDate = (dateInput: string): Date => {
     return new Date(`${dateInput}T00:00:00Z`);
+};
+
+const isValidDateInput = (dateInput: string): boolean => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+        return false;
+    }
+    return !Number.isNaN(dateInputToUtcDate(dateInput).getTime());
+};
+
+const normalizeEmployeeStartDate = (startDate: string, fallbackDate: string): string => {
+    const normalized = startDate.trim();
+    if (!isValidDateInput(normalized)) {
+        return fallbackDate;
+    }
+    return normalized;
+};
+
+const effectiveRangeStartForEmployee = (rangeStart: string, employeeStartDate: string): string => {
+    return employeeStartDate > rangeStart ? employeeStartDate : rangeStart;
 };
 
 const endOfMonthInput = (monthInput: string): string => {
@@ -90,22 +109,11 @@ const rangeLabel = (mode: DashboardFilterMode, from: string, to: string, monthIn
     return `${shortDateLabel(from)} - ${shortDateLabel(to)}`;
 };
 
-const eligibleEmployeesForShift = (
-    shift: ShiftDefinition,
-    activeEmployees: Array<{ role: 'Employee' | 'Supervisor' }>,
-): number => {
-    if (!shift.supervisorOnly) {
-        return activeEmployees.length;
-    }
-
-    return activeEmployees.filter((employee) => employee.role === 'Supervisor').length;
-};
-
 export const AppDashboard: React.FC = () => {
     const { employees } = useAppEmployees();
     const { config } = useAppSettings();
 
-    const today = todayBangkokDateInput();
+    const [today, setToday] = useState(todayBangkokDateInput);
     const [filterMode, setFilterMode] = useState<DashboardFilterMode>('daily');
     const [selectedDate, setSelectedDate] = useState(today);
     const [selectedMonth, setSelectedMonth] = useState(todayBangkokMonthInput);
@@ -117,6 +125,26 @@ export const AppDashboard: React.FC = () => {
     const [shiftFocusRecords, setShiftFocusRecords] = useState<AttendanceSummaryRecord[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+
+    useEffect(() => {
+        const refreshToday = () => {
+            const nextToday = todayBangkokDateInput();
+            setToday((current) => (current === nextToday ? current : nextToday));
+        };
+
+        const intervalId = window.setInterval(refreshToday, 60_000);
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                refreshToday();
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => {
+            window.clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, []);
 
     const activeEmployees = useMemo(() => {
         return employees.filter((employee) => employee.status === 'Active');
@@ -223,15 +251,37 @@ export const AppDashboard: React.FC = () => {
     const holidayDaysInRange = Math.max(0, rangeDays.length - workingRangeDays.length);
 
     const stats = useMemo(() => {
-        const filteredRecords = rangeRecords.filter((record) => (
-            activeEmployeeIds.has(record.employeeId) && !holidayDateSet.has(dayKeyBangkok(record.checkInAt))
-        ));
+        const startDateByEmployee = new Map(
+            activeEmployees.map((employee) => [
+                employee.id,
+                normalizeEmployeeStartDate(employee.startDate, selectedRange.from),
+            ]),
+        );
+        const eligibleEmployeeIds = new Set(
+            activeEmployees
+                .filter((employee) => (startDateByEmployee.get(employee.id) || selectedRange.from) <= selectedRange.to)
+                .map((employee) => employee.id),
+        );
+        const filteredRecords = rangeRecords.filter((record) => {
+            if (!eligibleEmployeeIds.has(record.employeeId)) {
+                return false;
+            }
+
+            const checkInDay = dayKeyBangkok(record.checkInAt);
+            if (holidayDateSet.has(checkInDay)) {
+                return false;
+            }
+
+            const employeeStartDate = startDateByEmployee.get(record.employeeId) || selectedRange.from;
+            const employeeRangeStart = effectiveRangeStartForEmployee(selectedRange.from, employeeStartDate);
+            return checkInDay >= employeeRangeStart;
+        });
         const uniqueCheckedInEmployees = new Set(filteredRecords.map((record) => record.employeeId));
         const lateRows = filteredRecords.filter((record) => record.status === 'Late');
         const lateEmployees = new Set(lateRows.map((record) => record.employeeId));
         const absentValue = workingRangeDays.length === 0
             ? 0
-            : Math.max(0, activeEmployees.length - uniqueCheckedInEmployees.size);
+            : Math.max(0, eligibleEmployeeIds.size - uniqueCheckedInEmployees.size);
 
         return {
             activeEmployees: activeEmployees.length,
@@ -242,7 +292,7 @@ export const AppDashboard: React.FC = () => {
                 ? Math.round(lateRows.reduce((sum, record) => sum + record.lateMinutes, 0) / lateRows.length)
                 : 0,
         };
-    }, [activeEmployeeIds, activeEmployees.length, holidayDateSet, rangeRecords, workingRangeDays.length]);
+    }, [activeEmployees, holidayDateSet, rangeRecords, selectedRange.from, selectedRange.to, workingRangeDays.length]);
 
     const trend = useMemo(() => {
         return rangeDays.map((dateInput) => {
@@ -258,27 +308,34 @@ export const AppDashboard: React.FC = () => {
 
     const shiftStatsToday = useMemo(() => {
         const isShiftFocusHoliday = holidayDateSet.has(shiftFocusDate);
+        const activeEmployeesOnFocusDate = activeEmployees.filter((employee) => {
+            const normalizedStartDate = normalizeEmployeeStartDate(employee.startDate, shiftFocusDate);
+            return normalizedStartDate <= shiftFocusDate;
+        });
         return config.shifts.map((shift, index) => {
-            const shiftRecords = shiftFocusRecords.filter((record) => record.shiftId === shift.id && activeEmployeeIds.has(record.employeeId));
+            const eligibleEmployees = isShiftFocusHoliday
+                ? []
+                : activeEmployeesOnFocusDate.filter((employee) => !shift.supervisorOnly || employee.role === 'Supervisor');
+            const eligibleEmployeeIds = new Set(eligibleEmployees.map((employee) => employee.id));
+            const shiftRecords = shiftFocusRecords.filter((record) => record.shiftId === shift.id && eligibleEmployeeIds.has(record.employeeId));
             const checkedIn = new Set(shiftRecords.map((record) => record.employeeId));
             const late = new Set(
                 shiftRecords
                     .filter((record) => record.status === 'Late')
                     .map((record) => record.employeeId),
             );
-            const eligibleEmployees = isShiftFocusHoliday ? 0 : eligibleEmployeesForShift(shift, activeEmployees);
 
             return {
                 key: shift.id,
                 label: shift.label,
                 checkedIn: checkedIn.size,
                 late: late.size,
-                absent: isShiftFocusHoliday ? 0 : Math.max(0, eligibleEmployees - checkedIn.size),
+                absent: isShiftFocusHoliday ? 0 : Math.max(0, eligibleEmployees.length - checkedIn.size),
                 shiftWindow: `${shift.start}-${shift.end}`,
                 accentClass: `shift-accent-${(index % 4) + 1}`,
             };
         });
-    }, [activeEmployeeIds, activeEmployees, config.shifts, holidayDateSet, shiftFocusDate, shiftFocusRecords]);
+    }, [activeEmployees, config.shifts, holidayDateSet, shiftFocusDate, shiftFocusRecords]);
 
     const shiftSummaryLabel = filterMode === 'daily' ? shortDateLabel(shiftFocusDate) : 'Today';
 
