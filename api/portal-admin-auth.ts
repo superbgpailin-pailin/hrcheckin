@@ -344,19 +344,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     }
 
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseServerKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
     const tokenSecret = process.env.PORTAL_AUTH_TOKEN_SECRET || process.env.CRON_SECRET;
 
-    if (!supabaseUrl || !serviceRoleKey || !tokenSecret) {
+    if (!supabaseUrl || !supabaseServerKey || !tokenSecret) {
         res.status(500).json({
             success: false,
             code: 'missing_env',
-            message: 'Missing required env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PORTAL_AUTH_TOKEN_SECRET or CRON_SECRET',
+            message: 'Missing required env vars: SUPABASE_URL (or VITE_SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY (or VITE_SUPABASE_ANON_KEY), PORTAL_AUTH_TOKEN_SECRET or CRON_SECRET',
         });
         return;
     }
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    const supabase = createClient(supabaseUrl, supabaseServerKey, {
         auth: { persistSession: false },
     });
 
