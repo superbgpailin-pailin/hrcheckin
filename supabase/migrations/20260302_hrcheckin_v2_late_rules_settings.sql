@@ -2,7 +2,6 @@
 -- Date: 2026-03-02
 
 begin;
-
 update public.settings
 set config = jsonb_set(
   config,
@@ -62,5 +61,4 @@ where id = 'checkin_v2'
     or jsonb_typeof(config -> 'lateRules') <> 'array'
     or jsonb_array_length(config -> 'lateRules') = 0
   );
-
 commit;

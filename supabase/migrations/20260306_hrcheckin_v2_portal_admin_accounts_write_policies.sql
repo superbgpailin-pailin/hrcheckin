@@ -2,9 +2,7 @@
 -- Date: 2026-03-06
 
 begin;
-
 alter table public.portal_admin_accounts enable row level security;
-
 drop policy if exists portal_admin_accounts_update_all on public.portal_admin_accounts;
 create policy portal_admin_accounts_update_all
 on public.portal_admin_accounts
@@ -19,12 +17,10 @@ with check (
     or (username <> 'master' and role = 'Admin')
   )
 );
-
 drop policy if exists portal_admin_accounts_delete_non_master on public.portal_admin_accounts;
 create policy portal_admin_accounts_delete_non_master
 on public.portal_admin_accounts
 for delete
 to anon, authenticated
 using (username <> 'master');
-
 commit;

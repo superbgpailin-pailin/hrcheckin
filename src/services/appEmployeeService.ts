@@ -30,6 +30,8 @@ interface EmployeeRow {
 type EmployeePayload = Record<string, string | null>;
 
 const tableName = 'employees';
+const EMPLOYEE_READ_TIMEOUT_MS = 30000;
+const EMPLOYEE_READ_RETRY_COUNT = 3;
 const BACKEND_UNAVAILABLE_MESSAGE = 'เซิร์ฟเวอร์ฐานข้อมูลตอบช้าหรือไม่พร้อมใช้งาน กรุณาลองใหม่';
 const employeeSelectFields = [
     'id',
@@ -52,6 +54,24 @@ const employeeSelectFields = [
     'selfie_url',
     'id_card_url',
     'passport_url',
+    'start_date',
+    'default_shift_id',
+].join(', ');
+const employeeSelectFallbackFields = [
+    'id',
+    'role',
+    'photo_url',
+    'first_name_th',
+    'last_name_th',
+    'first_name_en',
+    'last_name_en',
+    'nickname',
+    'position',
+    'department',
+    'status',
+    'pin',
+    'email',
+    'phone_number',
     'start_date',
     'default_shift_id',
 ].join(', ');
@@ -362,32 +382,63 @@ const renameEmployeeRelations = async (previousId: string, nextId: string): Prom
     await updateEmployeeReferenceColumn('employee_profile_requests', 'employee_id', previousId, nextId).catch(() => undefined);
 };
 
+const fetchEmployeeRows = async (selectFields: string): Promise<EmployeeRow[]> => {
+    const { data, error } = await withReadRetry(async () => {
+        return await supabase
+            .from(tableName)
+            .select(selectFields)
+            .order('id', { ascending: true });
+    }, EMPLOYEE_READ_TIMEOUT_MS, EMPLOYEE_READ_RETRY_COUNT);
+
+    if (error) {
+        throw error;
+    }
+
+    return (data as unknown as EmployeeRow[]) || [];
+};
+
+const fetchEmployeeRowById = async (employeeId: string, selectFields: string): Promise<EmployeeRow | null> => {
+    const { data, error } = await withReadRetry(async () => {
+        return await supabase
+            .from(tableName)
+            .select(selectFields)
+            .eq('id', employeeId)
+            .maybeSingle();
+    }, EMPLOYEE_READ_TIMEOUT_MS, EMPLOYEE_READ_RETRY_COUNT);
+
+    if (error) {
+        throw error;
+    }
+
+    return (data as unknown as EmployeeRow | null) || null;
+};
+
 export const appEmployeeService = {
     async getEmployees(): Promise<AppEmployee[]> {
         try {
-            const { data, error } = await withReadRetry(async () => {
-                return await supabase
-                    .from(tableName)
-                    .select(employeeSelectFields)
-                    .order('id', { ascending: true });
-            });
-
-            if (error) {
-                throw error;
-            }
-
-            const rows = (data as unknown as EmployeeRow[]) || [];
+            const rows = await fetchEmployeeRows(employeeSelectFields);
             return rows.map(toAppEmployee);
         } catch (error) {
-            const message = getErrorMessage(error);
+            let resolvedError: unknown = error;
+            const message = getErrorMessage(resolvedError);
+            if (isTransportError(message)) {
+                try {
+                    const fallbackRows = await fetchEmployeeRows(employeeSelectFallbackFields);
+                    return fallbackRows.map(toAppEmployee);
+                } catch (fallbackError) {
+                    resolvedError = fallbackError;
+                }
+            }
+
+            const resolvedMessage = getErrorMessage(resolvedError);
             const cachedEmployees = readCachedEmployees();
             if (cachedEmployees.length > 0) {
                 return cachedEmployees.sort((a, b) => a.id.localeCompare(b.id));
             }
-            if (isTransportError(message)) {
+            if (isTransportError(resolvedMessage)) {
                 throw new Error(BACKEND_UNAVAILABLE_MESSAGE);
             }
-            throw new Error(message || 'ไม่สามารถโหลดรายชื่อพนักงานได้');
+            throw new Error(resolvedMessage || 'Unable to load employee list.');
         }
     },
 
@@ -454,33 +505,36 @@ export const appEmployeeService = {
         const cachedEmployee = readCachedEmployees().find((employee) => employee.id.trim().toUpperCase() === normalized);
 
         try {
-            const { data, error } = await withReadRetry(async () => {
-                return await supabase
-                    .from(tableName)
-                    .select(employeeSelectFields)
-                    .eq('id', normalized)
-                    .maybeSingle();
-            });
-
-            if (error) {
-                throw error;
-            }
-
-            if (!data) {
+            const row = await fetchEmployeeRowById(normalized, employeeSelectFields);
+            if (!row) {
                 return null;
             }
 
-            return toAppEmployee(data as unknown as EmployeeRow);
+            return toAppEmployee(row);
         } catch (error) {
+            let resolvedError: unknown = error;
+            const message = getErrorMessage(resolvedError);
+            if (isTransportError(message)) {
+                try {
+                    const fallbackRow = await fetchEmployeeRowById(normalized, employeeSelectFallbackFields);
+                    if (!fallbackRow) {
+                        return null;
+                    }
+                    return toAppEmployee(fallbackRow);
+                } catch (fallbackError) {
+                    resolvedError = fallbackError;
+                }
+            }
+
             if (cachedEmployee) {
                 return cachedEmployee;
             }
 
-            const message = getErrorMessage(error);
-            if (isTransportError(message)) {
+            const resolvedMessage = getErrorMessage(resolvedError);
+            if (isTransportError(resolvedMessage)) {
                 throw new Error(BACKEND_UNAVAILABLE_MESSAGE);
             }
-            throw new Error(message);
+            throw new Error(resolvedMessage);
         }
     },
 

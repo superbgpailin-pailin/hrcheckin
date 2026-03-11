@@ -2,9 +2,7 @@
 -- Date: 2026-03-07
 
 begin;
-
 alter table public.attendance enable row level security;
-
 drop policy if exists attendance_update_checkin_for_client on public.attendance;
 create policy attendance_update_checkin_for_client
 on public.attendance
@@ -16,5 +14,4 @@ with check (
   and coalesce(shift_name, '') <> ''
   and coalesce(type, 'check_in') = 'check_in'
 );
-
 commit;

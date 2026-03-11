@@ -2,9 +2,7 @@
 -- Date: 2026-02-27
 
 begin;
-
 create extension if not exists pgcrypto;
-
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -14,7 +12,6 @@ begin
   return new;
 end;
 $$;
-
 -- SETTINGS
 create table if not exists public.settings (
   id text primary key,
@@ -22,16 +19,13 @@ create table if not exists public.settings (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 alter table public.settings add column if not exists config jsonb not null default '{}'::jsonb;
 alter table public.settings add column if not exists created_at timestamptz not null default now();
 alter table public.settings add column if not exists updated_at timestamptz not null default now();
-
 drop trigger if exists trg_settings_set_updated_at on public.settings;
 create trigger trg_settings_set_updated_at
 before update on public.settings
 for each row execute function public.set_updated_at();
-
 -- EMPLOYEES
 create table if not exists public.employees (
   id text primary key,
@@ -53,7 +47,6 @@ create table if not exists public.employees (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 alter table public.employees add column if not exists role text not null default 'Employee';
 alter table public.employees add column if not exists photo_url text;
 alter table public.employees add column if not exists first_name_th text not null default '';
@@ -71,16 +64,13 @@ alter table public.employees add column if not exists start_date date not null d
 alter table public.employees add column if not exists default_shift_id text;
 alter table public.employees add column if not exists created_at timestamptz not null default now();
 alter table public.employees add column if not exists updated_at timestamptz not null default now();
-
 create index if not exists idx_employees_role on public.employees(role);
 create index if not exists idx_employees_status on public.employees(status);
 create index if not exists idx_employees_department on public.employees(department);
-
 drop trigger if exists trg_employees_set_updated_at on public.employees;
 create trigger trg_employees_set_updated_at
 before update on public.employees
 for each row execute function public.set_updated_at();
-
 -- ATTENDANCE
 create table if not exists public.attendance (
   id uuid primary key default gen_random_uuid(),
@@ -97,7 +87,6 @@ create table if not exists public.attendance (
   shift_name text not null,
   created_at timestamptz not null default now()
 );
-
 alter table public.attendance add column if not exists user_id text;
 alter table public.attendance add column if not exists employee_id text;
 alter table public.attendance add column if not exists timestamp timestamptz not null default now();
@@ -110,11 +99,9 @@ alter table public.attendance add column if not exists photo_url text not null d
 alter table public.attendance add column if not exists status text not null default 'On Time';
 alter table public.attendance add column if not exists shift_name text;
 alter table public.attendance add column if not exists created_at timestamptz not null default now();
-
 create index if not exists idx_attendance_employee_timestamp on public.attendance(employee_id, timestamp desc);
 create index if not exists idx_attendance_shift_timestamp on public.attendance(shift_name, timestamp desc);
 create index if not exists idx_attendance_type on public.attendance(type);
-
 -- Optional hard rule: one check-in per employee per shift per local day (Asia/Bangkok)
 create unique index if not exists ux_attendance_checkin_per_shift_day
 on public.attendance (
@@ -123,7 +110,6 @@ on public.attendance (
   ((timestamp at time zone 'Asia/Bangkok')::date)
 )
 where type = 'check_in';
-
 -- Seed default app config row
 insert into public.settings (id, config)
 values (
@@ -192,5 +178,4 @@ values (
   )
 )
 on conflict (id) do nothing;
-
 commit;
