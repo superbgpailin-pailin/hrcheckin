@@ -247,8 +247,6 @@ export const AppReports: React.FC = () => {
     const today = todayBangkokDateInput();
     const currentMonth = today.slice(0, 7);
     const defaultMonthStart = `${currentMonth}-01`;
-    const calendarFromDate = `${currentMonth}-01`;
-    const calendarToDate = endOfMonthInput(currentMonth);
 
     const [records, setRecords] = useState<AttendanceSummaryRecord[]>([]);
     const [calendarRecords, setCalendarRecords] = useState<AttendanceSummaryRecord[]>([]);
@@ -260,6 +258,9 @@ export const AppReports: React.FC = () => {
     const [toDate, setToDate] = useState(today);
     const [employeeId, setEmployeeId] = useState('all');
     const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+    const calendarFromDate = fromDate;
+    const calendarToDate = toDate;
+    const calendarRangeLabel = fromDate === toDate ? fromDate : `${fromDate} - ${toDate}`;
     const allDaysInRange = useMemo(() => buildDateRange(fromDate, toDate), [fromDate, toDate]);
     const holidayDateSet = useMemo(
         () => new Set(config.officeHolidays.map((holiday) => holiday.date)),
@@ -611,7 +612,7 @@ export const AppReports: React.FC = () => {
                                                         <div className="report-detail-card">
                                                             <div className="calendar-month-head">
                                                                 <h4>
-                                                                    {`${row.employeeId} | ${getEmployeeLabel(row.employeeName, row.employeeId)} | ${monthLabel(currentMonth)}`}
+                                                                    {`${row.employeeId} | ${getEmployeeLabel(row.employeeName, row.employeeId)} | ${calendarRangeLabel}`}
                                                                 </h4>
                                                                 <span>Attendance Calendar</span>
                                                             </div>
