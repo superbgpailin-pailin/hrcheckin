@@ -2,6 +2,7 @@
 import { useAppLanguage } from '../context/AppLanguageContext';
 import { useAppSettings } from '../context/AppSettingsContext';
 import type { AppEmployee, EmployeeProfileDraft } from '../types/app';
+import type { AuditActorOverride } from '../services/auditLogService';
 import { appEmployeeService } from '../services/appEmployeeService';
 import { appFileUploadService } from '../services/appFileUploadService';
 import { ImageLightbox } from '../components/ImageLightbox';
@@ -183,6 +184,16 @@ const buildProfileEmployee = (
         passportUrl: draft.passportUrl,
         startDate: draft.startDate,
         defaultShiftId: undefined,
+    };
+};
+
+const buildSelfServiceAuditActor = (employeeId: string): AuditActorOverride => {
+    const normalizedEmployeeId = employeeId.trim().toUpperCase();
+    return {
+        type: 'employee',
+        id: normalizedEmployeeId,
+        name: normalizedEmployeeId,
+        source: 'self-service',
     };
 };
 
@@ -395,6 +406,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
             const sanitizedNewPin = newPin.replace(/\D/g, '').slice(0, 6);
             const sanitizedConfirmNewPin = confirmNewPin.replace(/\D/g, '').slice(0, 6);
             const shouldChangePin = sanitizedNewPin.length > 0 || sanitizedConfirmNewPin.length > 0;
+            const auditActor = buildSelfServiceAuditActor(employeeCode);
             if (shouldChangePin) {
                 if (sanitizedNewPin.length < 4) {
                     setError(t.newPinRequired);
@@ -406,7 +418,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                     setSubmitting(false);
                     return;
                 }
-                await appEmployeeService.updateEmployeePin(employeeCode, sanitizedNewPin);
+                await appEmployeeService.updateEmployeePin(employeeCode, sanitizedNewPin, { actor: auditActor });
             }
 
             const effectivePin = shouldChangePin ? sanitizedNewPin : draft.pin;
@@ -415,7 +427,7 @@ export const AppSelfProfile: React.FC<AppSelfProfileProps> = ({ onBack }) => {
                 employeeId: employeeCode,
                 pin: effectivePin,
             });
-            await appEmployeeService.upsertEmployee(employee, employeeCode);
+            await appEmployeeService.upsertEmployee(employee, employeeCode, { actor: auditActor });
             if (shouldChangePin) {
                 setNewPin('');
                 setConfirmNewPin('');

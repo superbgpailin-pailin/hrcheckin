@@ -113,13 +113,21 @@ const matchesRule = (minutes: number, rule: LatePenaltyRule): boolean => {
     return true;
 };
 
-const calculateLatePenalty = (records: AttendanceSummaryRecord[], rules: LatePenaltyRule[]): number => {
+const calculateLatePenalty = (
+    records: AttendanceSummaryRecord[],
+    rules: LatePenaltyRule[],
+): { directPenaltyAmount: number; accumulatedPenaltyAmount: number; totalPenaltyAmount: number } => {
     if (!records.length || !rules.length) {
-        return 0;
+        return {
+            directPenaltyAmount: 0,
+            accumulatedPenaltyAmount: 0,
+            totalPenaltyAmount: 0,
+        };
     }
 
     const sortedRules = sortRules(rules);
-    let total = 0;
+    let directPenaltyAmount = 0;
+    let accumulatedPenaltyAmount = 0;
     const monthlyMinutesByRule = new Map<string, number>();
 
     records.forEach((record) => {
@@ -132,8 +140,10 @@ const calculateLatePenalty = (records: AttendanceSummaryRecord[], rules: LatePen
             return;
         }
 
-        total += matchedRule.deductionAmount;
+        directPenaltyAmount += matchedRule.deductionAmount;
 
+        // Only rules that explicitly define monthly accumulation should contribute
+        // to the monthly accumulated deduction. Higher late bands are direct-charge only.
         if (
             matchedRule.monthlyAccumulatedMinutesThreshold !== null
             && matchedRule.monthlyAccumulatedDeduction !== null
@@ -153,13 +163,17 @@ const calculateLatePenalty = (records: AttendanceSummaryRecord[], rules: LatePen
         if (
             rule.monthlyAccumulatedMinutesThreshold !== null
             && rule.monthlyAccumulatedDeduction !== null
-            && minutes > rule.monthlyAccumulatedMinutesThreshold
+            && minutes >= rule.monthlyAccumulatedMinutesThreshold
         ) {
-            total += rule.monthlyAccumulatedDeduction;
+            accumulatedPenaltyAmount += rule.monthlyAccumulatedDeduction;
         }
     });
 
-    return total;
+    return {
+        directPenaltyAmount,
+        accumulatedPenaltyAmount,
+        totalPenaltyAmount: directPenaltyAmount + accumulatedPenaltyAmount,
+    };
 };
 
 const getEmployeeLabel = (employeeName: string, employeeId: string): string => {
@@ -375,6 +389,7 @@ export const AppReports: React.FC = () => {
                 const employeeRecords = summary?.records || [];
                 const lateRecords = summary?.lateRecords || [];
                 const totalLateMinutes = summary?.totalLateMinutes || 0;
+                const penalty = calculateLatePenalty(lateRecords, config.lateRules);
                 const onTimeCount = employeeRecords.length - lateRecords.length;
                 const normalizedStartDate = normalizeEmployeeStartDate(employee.startDate, fromDate);
                 const employeeRangeStart = effectiveRangeStart(fromDate, normalizedStartDate);
@@ -407,7 +422,9 @@ export const AppReports: React.FC = () => {
                     averageLateMinutes: lateRecords.length > 0 ? Math.round(totalLateMinutes / lateRecords.length) : 0,
                     absentDays,
                     leaveDays,
-                    latePenaltyAmount: calculateLatePenalty(lateRecords, config.lateRules),
+                    directLatePenaltyAmount: penalty.directPenaltyAmount,
+                    accumulatedLatePenaltyAmount: penalty.accumulatedPenaltyAmount,
+                    latePenaltyAmount: penalty.totalPenaltyAmount,
                 };
             })
             .filter((row) => row.employmentStatus !== 'Resigned')
@@ -481,6 +498,8 @@ export const AppReports: React.FC = () => {
             average_late_minutes: row.averageLateMinutes,
             absent_days: row.absentDays,
             leave_days: row.leaveDays,
+            direct_late_penalty_amount: row.directLatePenaltyAmount,
+            accumulated_late_penalty_amount: row.accumulatedLatePenaltyAmount,
             late_penalty_amount: row.latePenaltyAmount,
         }));
 
@@ -556,7 +575,9 @@ export const AppReports: React.FC = () => {
                                     <th>Total Late</th>
                                     <th>Absent</th>
                                     <th>Leave</th>
-                                    <th>Penalty</th>
+                                    <th>Direct</th>
+                                    <th>Accum.</th>
+                                    <th>Total</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -579,12 +600,14 @@ export const AppReports: React.FC = () => {
                                                 <td>{row.totalLateMinutes} (avg {row.averageLateMinutes})</td>
                                                 <td>{row.absentDays}</td>
                                                 <td>{row.leaveDays}</td>
+                                                <td>{row.directLatePenaltyAmount}</td>
+                                                <td>{row.accumulatedLatePenaltyAmount}</td>
                                                 <td>{row.latePenaltyAmount}</td>
                                             </tr>
 
                                             {isExpanded ? (
                                                 <tr className="report-detail-row">
-                                                    <td colSpan={8}>
+                                                    <td colSpan={10}>
                                                         <div className="report-detail-card">
                                                             <div className="calendar-month-head">
                                                                 <h4>

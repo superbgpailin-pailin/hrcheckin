@@ -2,6 +2,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import type { PortalUser } from '../types/app';
+import { auditLogService, type AuditActorOverride } from '../services/auditLogService';
 
 interface LoginResult {
     success: boolean;
@@ -315,6 +316,20 @@ const fromApiAccount = (account: PortalAuthApiAccount): PortalAccount => {
         photoUrl: String(account.photoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(account.displayName || account.username)}&background=1e3a8a&color=fff`),
         password: '',
         active: Boolean(account.active),
+    };
+};
+
+const toPortalAuditActor = (user: PortalUser | null): AuditActorOverride | undefined => {
+    if (!user) {
+        return undefined;
+    }
+
+    return {
+        type: 'portal_admin',
+        id: user.username,
+        name: user.displayName,
+        role: user.role,
+        source: 'portal',
     };
 };
 
@@ -674,6 +689,16 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
                 portalSessionToken,
             );
             await reloadAccounts();
+            await auditLogService.record({
+                actor: toPortalAuditActor(portalUser),
+                action: 'portal_admin.added',
+                entityType: 'portal_admin',
+                entityId: username,
+                summary: `Added portal admin ${username}.`,
+                details: {
+                    displayName,
+                },
+            });
             return { success: true, message: apiResult.message || 'เพิ่มแอดมินเรียบร้อยแล้ว' };
         } catch (error) {
             const apiErrorCode = getPortalAuthApiErrorCode(error);
@@ -727,6 +752,17 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
                 portalSessionToken,
             );
             await reloadAccounts();
+            await auditLogService.record({
+                actor: toPortalAuditActor(portalUser),
+                action: 'portal_admin.updated',
+                entityType: 'portal_admin',
+                entityId: username,
+                summary: `Updated portal admin ${username}.`,
+                details: {
+                    displayName,
+                    passwordChanged: Boolean(nextPassword),
+                },
+            });
             return { success: true, message: apiResult.message || 'แก้ไขข้อมูลแอดมินเรียบร้อยแล้ว' };
         } catch (error) {
             const apiErrorCode = getPortalAuthApiErrorCode(error);
@@ -784,6 +820,18 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         setAccounts(deduped);
         persistAccounts(deduped);
         await reloadAccounts();
+        await auditLogService.record({
+            actor: toPortalAuditActor(portalUser),
+            action: 'portal_admin.updated',
+            entityType: 'portal_admin',
+            entityId: username,
+            summary: `Updated portal admin ${username}.`,
+            details: {
+                displayName,
+                passwordChanged: Boolean(nextPassword),
+                storage: 'local-fallback',
+            },
+        });
         return { success: true, message: 'แก้ไขข้อมูลแอดมินเรียบร้อยแล้ว' };
     }, [accounts, clearPortalSession, portalSessionToken, portalUser, reloadAccounts]);
 
@@ -820,6 +868,13 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             const deduped = dedupeAccounts(next);
             setAccounts(deduped);
             persistAccounts(deduped);
+            await auditLogService.record({
+                actor: toPortalAuditActor(portalUser),
+                action: 'portal_admin.deleted',
+                entityType: 'portal_admin',
+                entityId: username,
+                summary: `Deleted portal admin ${username}.`,
+            });
             return { success: true, message: apiResult.message || 'ลบบัญชีแอดมินเรียบร้อยแล้ว' };
         } catch (error) {
             const apiErrorCode = getPortalAuthApiErrorCode(error);
@@ -849,6 +904,16 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
         const deduped = dedupeAccounts(next);
         setAccounts(deduped);
         persistAccounts(deduped);
+        await auditLogService.record({
+            actor: toPortalAuditActor(portalUser),
+            action: 'portal_admin.deleted',
+            entityType: 'portal_admin',
+            entityId: username,
+            summary: `Deleted portal admin ${username}.`,
+            details: {
+                storage: 'local-fallback',
+            },
+        });
         return { success: true, message: 'ลบบัญชีแอดมินเรียบร้อยแล้ว' };
     }, [accounts, clearPortalSession, portalSessionToken, portalUser]);
 
@@ -898,6 +963,13 @@ export const PortalAuthProvider: React.FC<PortalAuthProviderProps> = ({ children
             const deduped = dedupeAccounts(next);
             setAccounts(deduped);
             persistAccounts(deduped);
+            await auditLogService.record({
+                actor: toPortalAuditActor(portalUser),
+                action: 'portal_admin.password_changed',
+                entityType: 'portal_admin',
+                entityId: portalUser.username,
+                summary: `Changed password for portal admin ${portalUser.username}.`,
+            });
             return { success: true, message: apiResult.message || 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว' };
         } catch (error) {
             const apiErrorCode = getPortalAuthApiErrorCode(error);

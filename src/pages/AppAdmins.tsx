@@ -1,5 +1,33 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import type { AuditLogEntry } from '../types/app';
+import { auditLogService } from '../services/auditLogService';
 import { usePortalAuth } from '../context/PortalAuthContext';
+
+const formatAuditTimestamp = (value: string): string => {
+    if (!value) {
+        return '-';
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return value;
+    }
+
+    return parsed.toLocaleString('th-TH', {
+        dateStyle: 'short',
+        timeStyle: 'medium',
+        timeZone: 'Asia/Bangkok',
+    });
+};
+
+const formatAuditActor = (entry: AuditLogEntry): string => {
+    const actorName = entry.actorName.trim();
+    const actorId = entry.actorId.trim();
+    if (!actorName || actorName === actorId) {
+        return actorId || '-';
+    }
+    return `${actorName} (${actorId})`;
+};
 
 export const AppAdmins: React.FC = () => {
     const {
@@ -28,6 +56,9 @@ export const AppAdmins: React.FC = () => {
     const [editPassword, setEditPassword] = useState('');
     const [manageNotice, setManageNotice] = useState('');
     const [managing, setManaging] = useState(false);
+    const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+    const [loadingAuditLogs, setLoadingAuditLogs] = useState(false);
+    const [auditError, setAuditError] = useState('');
 
     const canManage = portalUser?.role === 'Master';
 
@@ -39,6 +70,23 @@ export const AppAdmins: React.FC = () => {
             return a.role === 'Master' ? -1 : 1;
         });
     }, [portalAdmins]);
+
+    const loadAuditLogs = useCallback(async () => {
+        setLoadingAuditLogs(true);
+        setAuditError('');
+        try {
+            const logs = await auditLogService.listRecent(50);
+            setAuditLogs(logs);
+        } catch (error) {
+            setAuditError(error instanceof Error ? error.message : 'ไม่สามารถโหลด audit log ได้');
+        } finally {
+            setLoadingAuditLogs(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadAuditLogs();
+    }, [loadAuditLogs]);
 
     const submitAddAdmin = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -53,6 +101,7 @@ export const AppAdmins: React.FC = () => {
         setUsername('');
         setDisplayName('');
         setPassword('');
+        void loadAuditLogs();
     };
 
     const submitChangePassword = async (event: React.FormEvent) => {
@@ -82,6 +131,7 @@ export const AppAdmins: React.FC = () => {
             setCurrentPassword('');
             setNextPassword('');
             setConfirmPassword('');
+            void loadAuditLogs();
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Password update failed.';
             setPasswordNotice(message);
@@ -123,6 +173,7 @@ export const AppAdmins: React.FC = () => {
         }
 
         cancelEdit();
+        void loadAuditLogs();
     };
 
     const removeAdmin = async (targetUsername: string) => {
@@ -137,6 +188,9 @@ export const AppAdmins: React.FC = () => {
         setManageNotice(result.message || '');
         if (editingUsername === targetUsername) {
             cancelEdit();
+        }
+        if (result.success) {
+            void loadAuditLogs();
         }
     };
 
@@ -321,6 +375,51 @@ export const AppAdmins: React.FC = () => {
                 </div>
 
                 {manageNotice ? <p className="panel-muted" style={{ marginTop: '0.8rem' }}>{manageNotice}</p> : null}
+            </section>
+
+            <section className="panel table-panel">
+                <div className="panel-head">
+                    <h3>Audit Log ล่าสุด</h3>
+                    <div className="inline-actions">
+                        <span>{auditLogs.length} รายการ</span>
+                        <button type="button" className="btn-muted" onClick={() => void loadAuditLogs()} disabled={loadingAuditLogs}>
+                            {loadingAuditLogs ? 'กำลังโหลด...' : 'รีเฟรช'}
+                        </button>
+                    </div>
+                </div>
+
+                {auditError ? <div className="form-error">{auditError}</div> : null}
+
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>เวลา</th>
+                                <th>ผู้แก้ไข</th>
+                                <th>รายการ</th>
+                                <th>ข้อมูล</th>
+                                <th>สรุป</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {auditLogs.length > 0 ? auditLogs.map((entry) => (
+                                <tr key={entry.id}>
+                                    <td>{formatAuditTimestamp(entry.createdAt)}</td>
+                                    <td>{formatAuditActor(entry)}</td>
+                                    <td>{entry.action}</td>
+                                    <td>{entry.entityType}:{entry.entityId}</td>
+                                    <td>{entry.summary}</td>
+                                </tr>
+                            )) : (
+                                <tr>
+                                    <td colSpan={5} className="panel-muted" style={{ textAlign: 'center' }}>
+                                        {loadingAuditLogs ? 'กำลังโหลด audit log...' : 'ยังไม่มี audit log'}
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </section>
         </div>
     );

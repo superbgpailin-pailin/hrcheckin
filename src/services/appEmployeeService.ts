@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import type { AppEmployee } from '../types/app';
+import { auditLogService, type AuditActorOverride } from './auditLogService';
 import { getErrorMessage, isTransportError, withReadRetry } from '../utils/supabaseUtils';
 
 interface EmployeeRow {
@@ -28,6 +29,10 @@ interface EmployeeRow {
 }
 
 type EmployeePayload = Record<string, string | null>;
+
+interface EmployeeMutationOptions {
+    actor?: AuditActorOverride;
+}
 
 const tableName = 'employees';
 const EMPLOYEE_READ_TIMEOUT_MS = 30000;
@@ -267,6 +272,52 @@ const toPayload = (employee: AppEmployee): EmployeePayload => {
     return payload;
 };
 
+const employeeAuditComparableKeys: Array<keyof AppEmployee> = [
+    'id',
+    'role',
+    'firstNameTH',
+    'lastNameTH',
+    'firstNameEN',
+    'lastNameEN',
+    'nickname',
+    'position',
+    'department',
+    'status',
+    'email',
+    'phoneNumber',
+    'birthDate',
+    'emergencyContactName',
+    'emergencyContactPhone',
+    'selfieUrl',
+    'idCardUrl',
+    'passportUrl',
+    'startDate',
+    'defaultShiftId',
+];
+
+const findCachedEmployeeSnapshot = (employeeId: string): AppEmployee | null => {
+    const normalizedEmployeeId = normalizeEmployeeId(employeeId);
+    return readCachedEmployees().find((employee) => normalizeEmployeeId(employee.id) === normalizedEmployeeId) || null;
+};
+
+const summarizeChangedEmployeeFields = (previous: AppEmployee | null, next: AppEmployee): string[] => {
+    if (!previous) {
+        return [];
+    }
+
+    return employeeAuditComparableKeys.filter((key) => String(previous[key] || '') !== String(next[key] || ''));
+};
+
+const employeeAuditLabel = (employee: Pick<AppEmployee, 'id' | 'firstNameTH' | 'lastNameTH' | 'nickname'>): string => {
+    const nickname = employee.nickname.trim();
+    if (nickname) {
+        return `${employee.id} (${nickname})`;
+    }
+
+    const fullName = `${employee.firstNameTH} ${employee.lastNameTH}`.replace(/\s+/g, ' ').trim();
+    return fullName ? `${employee.id} (${fullName})` : employee.id;
+};
+
 const withoutKey = (source: EmployeePayload, key: string): EmployeePayload => {
     const { [key]: ignored, ...rest } = source;
     void ignored;
@@ -442,10 +493,11 @@ export const appEmployeeService = {
         }
     },
 
-    async upsertEmployee(employee: AppEmployee, previousId = employee.id): Promise<void> {
+    async upsertEmployee(employee: AppEmployee, previousId = employee.id, options: EmployeeMutationOptions = {}): Promise<void> {
         const payload = toPayload(employee);
         const normalizedNextId = normalizeEmployeeId(employee.id);
         const normalizedPreviousId = normalizeEmployeeId(previousId);
+        const existingSnapshot = findCachedEmployeeSnapshot(normalizedPreviousId) || findCachedEmployeeSnapshot(normalizedNextId);
 
         try {
             const { error } = await supabase.from(tableName).upsert(payload);
@@ -472,17 +524,57 @@ export const appEmployeeService = {
             }
             throw new Error(message || 'ไม่สามารถบันทึกข้อมูลพนักงานได้');
         }
+
+        const renamed = normalizedPreviousId && normalizedPreviousId !== normalizedNextId;
+        await auditLogService.record({
+            actor: options.actor,
+            action: renamed
+                ? 'employee.renamed'
+                : existingSnapshot
+                    ? 'employee.updated'
+                    : 'employee.created',
+            entityType: 'employee',
+            entityId: normalizedNextId,
+            summary: renamed
+                ? `Renamed employee ${normalizedPreviousId} to ${employeeAuditLabel(employee)}.`
+                : existingSnapshot
+                    ? `Updated employee ${employeeAuditLabel(employee)}.`
+                    : `Created employee ${employeeAuditLabel(employee)}.`,
+            details: {
+                previousId: renamed ? normalizedPreviousId : null,
+                changedFields: summarizeChangedEmployeeFields(existingSnapshot, employee),
+                department: employee.department,
+                position: employee.position,
+                status: employee.status,
+                role: employee.role,
+            },
+        });
     },
 
-    async upsertEmployees(items: AppEmployee[]): Promise<void> {
+    async upsertEmployees(items: AppEmployee[], options: EmployeeMutationOptions = {}): Promise<void> {
         if (!items.length) {
             return;
         }
 
         const payloads = items.map(toPayload);
+        const existingIds = new Set(readCachedEmployees().map((employee) => normalizeEmployeeId(employee.id)));
         try {
             const { error } = await supabase.from(tableName).upsert(payloads);
             if (!error) {
+                await auditLogService.record({
+                    actor: options.actor,
+                    action: items.every((employee) => !existingIds.has(normalizeEmployeeId(employee.id)))
+                        ? 'employee.bulk_created'
+                        : 'employee.bulk_upsert',
+                    entityType: 'employee',
+                    entityId: `${items.length}-records`,
+                    summary: `Saved ${items.length} employee records.`,
+                    details: {
+                        count: items.length,
+                        createdCount: items.filter((employee) => !existingIds.has(normalizeEmployeeId(employee.id))).length,
+                        employeeIds: items.map((employee) => normalizeEmployeeId(employee.id)).slice(0, 50),
+                    },
+                });
                 return;
             }
 
@@ -494,6 +586,21 @@ export const appEmployeeService = {
             }
             throw new Error(message || 'ไม่สามารถบันทึกข้อมูลพนักงานได้');
         }
+
+        await auditLogService.record({
+            actor: options.actor,
+            action: items.every((employee) => !existingIds.has(normalizeEmployeeId(employee.id)))
+                ? 'employee.bulk_created'
+                : 'employee.bulk_upsert',
+            entityType: 'employee',
+            entityId: `${items.length}-records`,
+            summary: `Saved ${items.length} employee records.`,
+            details: {
+                count: items.length,
+                createdCount: items.filter((employee) => !existingIds.has(normalizeEmployeeId(employee.id))).length,
+                employeeIds: items.map((employee) => normalizeEmployeeId(employee.id)).slice(0, 50),
+            },
+        });
     },
 
     async getEmployeeById(id: string): Promise<AppEmployee | null> {
@@ -574,7 +681,7 @@ export const appEmployeeService = {
         await appEmployeeService.updateEmployeePin(normalized, sanitizedNewPin);
     },
 
-    async updateEmployeePin(id: string, pin: string): Promise<void> {
+    async updateEmployeePin(id: string, pin: string, options: EmployeeMutationOptions = {}): Promise<void> {
         const normalized = id.trim().toUpperCase();
         const sanitizedPin = sanitizePin(pin);
 
@@ -599,12 +706,37 @@ export const appEmployeeService = {
         if (!data) {
             throw new Error('ไม่พบรหัสพนักงานนี้ กรุณาติดต่อแอดมิน');
         }
+
+        await auditLogService.record({
+            actor: options.actor,
+            action: 'employee.pin_changed',
+            entityType: 'employee',
+            entityId: normalized,
+            summary: `Changed PIN for employee ${normalized}.`,
+        });
     },
 
-    async deleteEmployee(id: string): Promise<void> {
-        const { error } = await supabase.from(tableName).delete().eq('id', normalizeEmployeeId(id));
+    async deleteEmployee(id: string, options: EmployeeMutationOptions = {}): Promise<void> {
+        const normalizedEmployeeId = normalizeEmployeeId(id);
+        const existingSnapshot = findCachedEmployeeSnapshot(normalizedEmployeeId);
+        const { error } = await supabase.from(tableName).delete().eq('id', normalizedEmployeeId);
         if (error) {
             throw new Error(getErrorMessage(error));
         }
+
+        await auditLogService.record({
+            actor: options.actor,
+            action: 'employee.deleted',
+            entityType: 'employee',
+            entityId: normalizedEmployeeId,
+            summary: `Deleted employee ${existingSnapshot ? employeeAuditLabel(existingSnapshot) : normalizedEmployeeId}.`,
+            details: existingSnapshot
+                ? {
+                    department: existingSnapshot.department,
+                    position: existingSnapshot.position,
+                    status: existingSnapshot.status,
+                }
+                : {},
+        });
     },
 };

@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { DEFAULT_SHIFTS } from '../data/appDefaults';
 import type { AppEmployee, AttendanceSummaryRecord, ShiftDefinition } from '../types/app';
+import { auditLogService } from './auditLogService';
 import { estimatedCheckoutAt, lateMinutesForCheckIn } from '../utils/shiftUtils';
 import { getErrorMessage, isTransportError, withReadRetry } from '../utils/supabaseUtils';
 
@@ -813,6 +814,13 @@ export const appAttendanceService = {
         }
 
         clearAttendanceCache();
+
+        await auditLogService.record({
+            action: 'attendance.deleted',
+            entityType: 'attendance',
+            entityId: recordId,
+            summary: `Deleted attendance record ${recordId}.`,
+        });
     },
 
     async deleteCheckIns(recordIds: string[]): Promise<void> {
@@ -830,6 +838,17 @@ export const appAttendanceService = {
         }
 
         clearAttendanceCache();
+
+        await auditLogService.record({
+            action: 'attendance.bulk_deleted',
+            entityType: 'attendance',
+            entityId: `${recordIds.length}-records`,
+            summary: `Deleted ${recordIds.length} attendance records.`,
+            details: {
+                count: recordIds.length,
+                recordIds: recordIds.slice(0, 50),
+            },
+        });
     },
 
     async updateCheckIn(recordId: string, updates: { shift_name?: string; timestamp?: string; status?: string; photo_url?: string }): Promise<void> {
@@ -852,5 +871,13 @@ export const appAttendanceService = {
 
         await updateWithLegacyPayloadFallback(recordId, payload);
         clearAttendanceCache();
+
+        await auditLogService.record({
+            action: 'attendance.updated',
+            entityType: 'attendance',
+            entityId: recordId,
+            summary: `Updated attendance record ${recordId}.`,
+            details: payload,
+        });
     },
 };

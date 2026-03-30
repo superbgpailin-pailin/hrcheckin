@@ -7,6 +7,7 @@ import type {
     EmployeeProfileRequestType,
 } from '../types/app';
 import { appEmployeeService } from './appEmployeeService';
+import { auditLogService } from './auditLogService';
 import { getErrorMessage, isSchemaMissingError } from '../utils/supabaseUtils';
 
 interface ProfileRequestRow {
@@ -370,7 +371,24 @@ export const appProfileRequestService = {
         const requestType: EmployeeProfileRequestType = 'update';
 
         if (profileRequestTableUnavailable) {
-            return createPendingLocalRequest(draft, requestType);
+            const localResult = createPendingLocalRequest(draft, requestType);
+            await auditLogService.record({
+                actor: {
+                    type: 'employee',
+                    id: employeeId,
+                    name: employeeId,
+                    source: 'self-service',
+                },
+                action: 'profile_request.submitted',
+                entityType: 'employee_profile_request',
+                entityId: localResult.id,
+                summary: `Submitted local profile request for employee ${employeeId}.`,
+                details: {
+                    requestType,
+                    storage: 'local',
+                },
+            });
+            return localResult;
         }
 
         try {
@@ -393,13 +411,46 @@ export const appProfileRequestService = {
             }
 
             const inserted = await insertRequest(toPayload(draft, requestType));
-            return { id: String(inserted.id || ''), requestType };
+            const result = { id: String(inserted.id || ''), requestType };
+            await auditLogService.record({
+                actor: {
+                    type: 'employee',
+                    id: employeeId,
+                    name: employeeId,
+                    source: 'self-service',
+                },
+                action: 'profile_request.submitted',
+                entityType: 'employee_profile_request',
+                entityId: result.id || employeeId,
+                summary: `Submitted profile request for employee ${employeeId}.`,
+                details: {
+                    requestType,
+                },
+            });
+            return result;
         } catch (error) {
             const message = getErrorMessage(error);
             if (!markProfileRequestTableUnavailable(message)) {
                 throw (error instanceof Error ? error : new Error(message || 'ไม่สามารถส่งคำขอได้'));
             }
-            return createPendingLocalRequest(draft, requestType);
+            const localResult = createPendingLocalRequest(draft, requestType);
+            await auditLogService.record({
+                actor: {
+                    type: 'employee',
+                    id: employeeId,
+                    name: employeeId,
+                    source: 'self-service',
+                },
+                action: 'profile_request.submitted',
+                entityType: 'employee_profile_request',
+                entityId: localResult.id,
+                summary: `Submitted local profile request for employee ${employeeId}.`,
+                details: {
+                    requestType,
+                    storage: 'local-fallback',
+                },
+            });
+            return localResult;
         }
     },
 
@@ -436,6 +487,21 @@ export const appProfileRequestService = {
     async approveRequest(requestId: string, reviewedBy: string): Promise<void> {
         if (profileRequestTableUnavailable) {
             await approveLocalRequest(requestId, reviewedBy);
+            await auditLogService.record({
+                actor: {
+                    type: 'portal_admin',
+                    id: reviewedBy,
+                    name: reviewedBy,
+                    source: 'portal',
+                },
+                action: 'profile_request.approved',
+                entityType: 'employee_profile_request',
+                entityId: requestId,
+                summary: `Approved local profile request ${requestId}.`,
+                details: {
+                    storage: 'local',
+                },
+            });
             return;
         }
 
@@ -498,18 +564,65 @@ export const appProfileRequestService = {
             if (updateError) {
                 throw new Error(updateError.message);
             }
+
+            await auditLogService.record({
+                actor: {
+                    type: 'portal_admin',
+                    id: reviewedBy,
+                    name: reviewedBy,
+                    source: 'portal',
+                },
+                action: 'profile_request.approved',
+                entityType: 'employee_profile_request',
+                entityId: requestId,
+                summary: `Approved profile request ${requestId}.`,
+                details: {
+                    employeeId: draft.employeeId,
+                },
+            });
         } catch (error) {
             const message = getErrorMessage(error);
             if (!markProfileRequestTableUnavailable(message)) {
                 throw (error instanceof Error ? error : new Error(message || 'ไม่สามารถอนุมัติคำขอได้'));
             }
             await approveLocalRequest(requestId, reviewedBy);
+            await auditLogService.record({
+                actor: {
+                    type: 'portal_admin',
+                    id: reviewedBy,
+                    name: reviewedBy,
+                    source: 'portal',
+                },
+                action: 'profile_request.approved',
+                entityType: 'employee_profile_request',
+                entityId: requestId,
+                summary: `Approved local profile request ${requestId}.`,
+                details: {
+                    storage: 'local-fallback',
+                },
+            });
         }
     },
 
     async rejectRequest(requestId: string, reviewedBy: string, reviewNote: string): Promise<void> {
         if (profileRequestTableUnavailable) {
             rejectLocalRequest(requestId, reviewedBy, reviewNote);
+            await auditLogService.record({
+                actor: {
+                    type: 'portal_admin',
+                    id: reviewedBy,
+                    name: reviewedBy,
+                    source: 'portal',
+                },
+                action: 'profile_request.rejected',
+                entityType: 'employee_profile_request',
+                entityId: requestId,
+                summary: `Rejected local profile request ${requestId}.`,
+                details: {
+                    storage: 'local',
+                    reviewNote: reviewNote.trim(),
+                },
+            });
             return;
         }
 
@@ -527,12 +640,44 @@ export const appProfileRequestService = {
             if (error) {
                 throw error;
             }
+
+            await auditLogService.record({
+                actor: {
+                    type: 'portal_admin',
+                    id: reviewedBy,
+                    name: reviewedBy,
+                    source: 'portal',
+                },
+                action: 'profile_request.rejected',
+                entityType: 'employee_profile_request',
+                entityId: requestId,
+                summary: `Rejected profile request ${requestId}.`,
+                details: {
+                    reviewNote: reviewNote.trim(),
+                },
+            });
         } catch (error) {
             const message = getErrorMessage(error);
             if (!markProfileRequestTableUnavailable(message)) {
                 throw (error instanceof Error ? error : new Error(message || 'ไม่สามารถปฏิเสธคำขอได้'));
             }
             rejectLocalRequest(requestId, reviewedBy, reviewNote);
+            await auditLogService.record({
+                actor: {
+                    type: 'portal_admin',
+                    id: reviewedBy,
+                    name: reviewedBy,
+                    source: 'portal',
+                },
+                action: 'profile_request.rejected',
+                entityType: 'employee_profile_request',
+                entityId: requestId,
+                summary: `Rejected local profile request ${requestId}.`,
+                details: {
+                    storage: 'local-fallback',
+                    reviewNote: reviewNote.trim(),
+                },
+            });
         }
     },
 };

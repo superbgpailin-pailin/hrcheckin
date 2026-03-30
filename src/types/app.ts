@@ -149,6 +149,21 @@ export interface PortalUser {
     photoUrl: string;
 }
 
+export interface AuditLogEntry {
+    id: string;
+    createdAt: string;
+    actorType: string;
+    actorId: string;
+    actorName: string;
+    actorRole: string;
+    actorSource: string;
+    action: string;
+    entityType: string;
+    entityId: string;
+    summary: string;
+    details: Record<string, unknown>;
+}
+
 export interface AttendanceSummaryRecord {
     id: string;
     employeeId: string;
@@ -179,6 +194,8 @@ export interface AttendanceEmployeeReportRow {
     averageLateMinutes: number;
     absentDays: number;
     leaveDays: number;
+    directLatePenaltyAmount: number;
+    accumulatedLatePenaltyAmount: number;
     latePenaltyAmount: number;
 }
 

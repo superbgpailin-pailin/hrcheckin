@@ -7,6 +7,7 @@ import {
     DEFAULT_TELEGRAM_CHECKIN_SUMMARY,
 } from '../data/appDefaults';
 import type { AppSystemConfig } from '../types/app';
+import { auditLogService } from './auditLogService';
 import { getErrorMessage, isSchemaMissingError, withReadRetry } from '../utils/supabaseUtils';
 
 const tableName = 'settings';
@@ -348,5 +349,20 @@ export const appSettingsService = {
             }
             throw new Error(error.message);
         }
+
+        await auditLogService.record({
+            action: 'settings.updated',
+            entityType: 'settings',
+            entityId: settingsId,
+            summary: 'Updated system settings.',
+            details: {
+                lateRuleCount: merged.lateRules.length,
+                officeHolidayCount: merged.officeHolidays.length,
+                departmentOptionCount: merged.employeeFieldOptions.departments.length,
+                positionOptionCount: merged.employeeFieldOptions.positions.length,
+                statusOptionCount: merged.employeeFieldOptions.statuses.length,
+                telegramSummaryEnabled: merged.telegramCheckInSummary.enabled,
+            },
+        });
     },
 };
