@@ -134,6 +134,7 @@ const ATTENDANCE_DEFAULT_ROW_LIMIT = 10000;
 const ATTENDANCE_MAX_RANGE_DAYS = 120;
 const ATTENDANCE_NO_TIMESTAMP_MAX_RANGE_DAYS = 3;
 const ATTENDANCE_NO_TIMESTAMP_ROW_LIMIT = 1500;
+const SUPABASE_PAGE_SIZE = 1000;
 const resolvedAttendanceSelectColumnsByProfile: Record<AttendanceColumnProfile, string[]> = {
     full: [...attendanceSelectColumnsByProfile.full],
     lite: [...attendanceSelectColumnsByProfile.lite],
@@ -536,41 +537,52 @@ const loadRowsFromSupabase = async (
         const queryRowLimit = withTimestampFilter
             ? rowLimit
             : Math.min(rowLimit, ATTENDANCE_NO_TIMESTAMP_ROW_LIMIT);
-        let query = supabase
-            .from(tableName)
-            .select(selectColumns.join(', '))
-            .limit(queryRowLimit);
+        const pageSize = Math.max(1, Math.min(queryRowLimit, SUPABASE_PAGE_SIZE));
+        const rows: AttendanceRow[] = [];
 
-        if (withTimestampFilter) {
-            query = query.order('timestamp', { ascending: false });
+        for (let offset = 0; offset < queryRowLimit; offset += pageSize) {
+            let query = supabase
+                .from(tableName)
+                .select(selectColumns.join(', '))
+                .range(offset, Math.min(offset + pageSize - 1, queryRowLimit - 1));
+
+            if (withTimestampFilter) {
+                query = query.order('timestamp', { ascending: false });
+            }
+
+            if (normalizedFilters.employeeId) {
+                query = query.eq('employee_id', normalizedFilters.employeeId);
+            }
+
+            // Filter check_in only at the database level to reduce bandwidth
+            // Use .or to ensure we don't accidentally filter out legacy rows where type is null
+            if (selectColumns.includes('type')) {
+                query = query.or('type.neq.check_out,type.is.null');
+            }
+
+            if (withTimestampFilter && normalizedFilters.from) {
+                query = query.gte('timestamp', bangkokRangeStartIso(normalizedFilters.from));
+            }
+
+            if (withTimestampFilter && normalizedFilters.to) {
+                query = query.lt('timestamp', bangkokRangeEndExclusiveIso(normalizedFilters.to));
+            }
+
+            const { data, error } = await withReadRetry(async () => {
+                return await query;
+            });
+            if (error) {
+                throw error;
+            }
+
+            const pageRows = (data as AttendanceRow[]) || [];
+            rows.push(...pageRows);
+            if (pageRows.length < pageSize) {
+                break;
+            }
         }
 
-        if (normalizedFilters.employeeId) {
-            query = query.eq('employee_id', normalizedFilters.employeeId);
-        }
-
-        // Filter check_in only at the database level to reduce bandwidth
-        // Use .or to ensure we don't accidentally filter out legacy rows where type is null
-        if (selectColumns.includes('type')) {
-            query = query.or('type.neq.check_out,type.is.null');
-        }
-
-        if (withTimestampFilter && normalizedFilters.from) {
-            query = query.gte('timestamp', bangkokRangeStartIso(normalizedFilters.from));
-        }
-
-        if (withTimestampFilter && normalizedFilters.to) {
-            query = query.lt('timestamp', bangkokRangeEndExclusiveIso(normalizedFilters.to));
-        }
-
-        const { data, error } = await withReadRetry(async () => {
-            return await query;
-        });
-        if (error) {
-            throw error;
-        }
-
-        return (data as AttendanceRow[]) || [];
+        return rows;
     };
 
     for (let attempt = 0; attempt < defaultSelectColumns.length + 2; attempt += 1) {

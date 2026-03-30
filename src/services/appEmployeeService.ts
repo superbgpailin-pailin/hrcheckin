@@ -37,6 +37,7 @@ interface EmployeeMutationOptions {
 const tableName = 'employees';
 const EMPLOYEE_READ_TIMEOUT_MS = 30000;
 const EMPLOYEE_READ_RETRY_COUNT = 3;
+const EMPLOYEE_PAGE_SIZE = 100;
 const BACKEND_UNAVAILABLE_MESSAGE = 'เซิร์ฟเวอร์ฐานข้อมูลตอบช้าหรือไม่พร้อมใช้งาน กรุณาลองใหม่';
 const employeeSelectFields = [
     'id',
@@ -434,18 +435,29 @@ const renameEmployeeRelations = async (previousId: string, nextId: string): Prom
 };
 
 const fetchEmployeeRows = async (selectFields: string): Promise<EmployeeRow[]> => {
-    const { data, error } = await withReadRetry(async () => {
-        return await supabase
-            .from(tableName)
-            .select(selectFields)
-            .order('id', { ascending: true });
-    }, EMPLOYEE_READ_TIMEOUT_MS, EMPLOYEE_READ_RETRY_COUNT);
+    const rows: EmployeeRow[] = [];
 
-    if (error) {
-        throw error;
+    for (let offset = 0; ; offset += EMPLOYEE_PAGE_SIZE) {
+        const { data, error } = await withReadRetry(async () => {
+            return await supabase
+                .from(tableName)
+                .select(selectFields)
+                .order('id', { ascending: true })
+                .range(offset, offset + EMPLOYEE_PAGE_SIZE - 1);
+        }, EMPLOYEE_READ_TIMEOUT_MS, EMPLOYEE_READ_RETRY_COUNT);
+
+        if (error) {
+            throw error;
+        }
+
+        const pageRows = (data as unknown as EmployeeRow[]) || [];
+        rows.push(...pageRows);
+        if (pageRows.length < EMPLOYEE_PAGE_SIZE) {
+            break;
+        }
     }
 
-    return (data as unknown as EmployeeRow[]) || [];
+    return rows;
 };
 
 const fetchEmployeeRowById = async (employeeId: string, selectFields: string): Promise<EmployeeRow | null> => {
