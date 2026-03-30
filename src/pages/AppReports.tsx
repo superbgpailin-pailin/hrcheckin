@@ -285,7 +285,7 @@ export const AppReports: React.FC = () => {
                     to: toDate,
                     employeeId: employeeId === 'all' ? undefined : employeeId,
                 },
-                { detailLevel: 'lite' },
+                { detailLevel: 'lite', useCache: false },
             );
             setRecords(result);
         } catch (loadError) {
@@ -324,7 +324,7 @@ export const AppReports: React.FC = () => {
                         to: calendarToDate,
                         employeeId: selectedEmployeeId,
                     },
-                    { detailLevel: 'lite' },
+                    { detailLevel: 'lite', useCache: false },
                 );
 
                 if (!cancelled) {
